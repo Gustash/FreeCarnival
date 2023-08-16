@@ -1,6 +1,5 @@
 use reqwest::header::HeaderMap;
-use serde::Serialize;
-use serde_query::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     api::GalaRequest,
@@ -17,19 +16,17 @@ pub(crate) struct SyncResult {
 
 #[derive(Deserialize, Serialize, Debug)]
 pub(crate) struct UserInfo {
-    #[query(".status")]
     status: String,
-    #[query(".user_found")]
     user_found: String,
-    #[query("._indiegala_user_email")]
+    #[serde(alias = "._indiegala_user_email")]
     email: Option<String>,
-    #[query("._indiegala_username")]
+    #[serde(alias = "._indiegala_username")]
     username: Option<String>,
-    #[query("._indiegala_user_id")]
+    #[serde(alias = "._indiegala_user_id")]
     user_id: Option<u64>,
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(serde_query::Deserialize, Serialize, Debug)]
 pub(crate) struct UserShowcaseContent {
     #[query(".showcase_content.content.user_collection")]
     user_collection: Option<Vec<Product>>,
@@ -37,23 +34,20 @@ pub(crate) struct UserShowcaseContent {
 
 #[derive(Deserialize, Serialize, Debug)]
 pub(crate) struct Product {
-    #[query(".prod_dev_namespace")]
-    prod_dev_namespace: String,
-    #[query(".prod_slugged_name")]
-    prod_slugged_name: String,
-    #[query(".id")]
-    id: u64,
-    #[query(".prod_name")]
-    prod_name: String,
+    #[serde(alias = ".prod_dev_namespace")]
+    pub(crate) namespace: String,
+    #[serde(alias = ".prod_slugged_name")]
+    pub(crate) slugged_name: String,
+    pub(crate) id: u64,
+    #[serde(alias = ".prod_name")]
+    pub(crate) name: String,
+    #[serde(alias = ".prod_id_key_name")]
+    pub(crate) id_key_name: String,
 }
 
 impl std::fmt::Display for Product {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "[{}]\t{} ({})",
-            self.prod_slugged_name, self.prod_name, self.id
-        )
+        write!(f, "[{}]\t{} ({})", self.slugged_name, self.name, self.id)
     }
 }
 

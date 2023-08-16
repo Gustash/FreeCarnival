@@ -28,4 +28,6 @@ pub(crate) enum Commands {
     Sync,
     /// List your library
     Library,
+    /// Install a game from your library
+    Install { slug: String }, // TODO: Install specific version
 }

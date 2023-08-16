@@ -4,6 +4,7 @@ use reqwest::header::{self, HeaderMap};
 use crate::config::{CookieConfig, GalaConfig};
 
 pub(crate) mod auth;
+pub(crate) mod product;
 
 pub(crate) struct GalaRequest {
     client: reqwest::Client,

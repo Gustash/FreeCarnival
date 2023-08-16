@@ -11,6 +11,7 @@ mod cli;
 mod config;
 mod constants;
 mod prelude;
+mod utils;
 
 #[tokio::main]
 async fn main() {
@@ -44,6 +45,9 @@ async fn main() {
             for product in library.collection {
                 println!("{}", product);
             }
+        }
+        Commands::Install { slug } => {
+            let build_number = utils::install(&slug).await;
         }
     }
 }
