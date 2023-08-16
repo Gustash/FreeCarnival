@@ -4,7 +4,7 @@
 
 ## Planned features:
 
-- [ ] Authentication
+- [x] Authentication
 - [ ] Installing games
 - [ ] Updating games
 - [ ] Uninstalling games
