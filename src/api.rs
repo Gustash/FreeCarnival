@@ -1,6 +1,7 @@
-use std::{fs, io::BufWriter};
-
+use cookie::Cookie;
 use reqwest::header::{self, HeaderMap};
+
+use crate::config::{CookieConfig, GalaConfig};
 
 pub(crate) mod auth;
 
@@ -15,6 +16,22 @@ impl GalaRequest {
             header::CONTENT_TYPE,
             "application/x-www-form-urlencoded".parse().unwrap(),
         );
+        if let Ok(cookie_config) = CookieConfig::load() {
+            let cookie_header = cookie_config
+                .cookies
+                .iter()
+                .map(|c| Cookie::parse(c).unwrap())
+                .fold(String::new(), |a, b| {
+                    let cookie = format!("{}={}", b.name(), b.value());
+
+                    if a.is_empty() {
+                        cookie
+                    } else {
+                        a + "; " + &cookie
+                    }
+                });
+            default_headers.insert(header::COOKIE, cookie_header.parse().unwrap());
+        }
         // TODO: Create custom CookieStore
         let client = reqwest::Client::builder()
             .default_headers(default_headers)
@@ -25,14 +42,5 @@ impl GalaRequest {
             .unwrap();
 
         GalaRequest { client }
-    }
-
-    fn save_cookies(&self) {
-        fs::create_dir_all("/home/gustash/.config/openGala")
-            .expect("Failed to create config directory");
-        let mut writer = fs::File::create("/home/gustash/.config/openGala/cookies.json")
-            .map(BufWriter::new)
-            .unwrap();
-        // TODO: Save cookies in JSON file
     }
 }

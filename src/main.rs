@@ -1,8 +1,10 @@
 use crate::api::auth;
 use crate::cli::Cli;
+use crate::config::GalaConfig;
+use api::auth::SyncResult;
 use clap::Parser;
 use cli::Commands;
-use prelude::GalaConfig;
+use config::{CookieConfig, LibraryConfig, UserConfig};
 
 mod api;
 mod cli;
@@ -24,13 +26,39 @@ async fn main() {
             };
 
             match auth::login(&username, &password).await {
-                Ok(user_config) => {
-                    if let Some(user_config) = user_config {
-                        user_config.store().expect("Failed to save user config");
-                    }
-                }
+                Ok(result) => save_user_info(&result),
                 Err(err) => println!("Failed to login: {err:#?}"),
             }
         }
+        Commands::Logout => {
+            UserConfig::clear().expect("Error clearing user config");
+            CookieConfig::clear().expect("Error clearing cookies");
+            LibraryConfig::clear().expect("Error clearing library");
+        }
+        Commands::Sync => match auth::sync().await {
+            Ok(result) => save_user_info(&result),
+            Err(err) => println!("Failed to sync: {err:#?}"),
+        },
+        Commands::Library => {
+            let library = LibraryConfig::load().expect("Failed to load library");
+            for product in library.collection {
+                println!("{}", product);
+            }
+        }
+    }
+}
+
+fn save_user_info(data: &Option<SyncResult>) {
+    if let Some(SyncResult {
+        user_config,
+        cookie_config,
+        library_config,
+    }) = data
+    {
+        user_config.store().expect("Failed to save user config");
+        cookie_config.store().expect("Failed to save cookies");
+        library_config
+            .store()
+            .expect("Failed to save library config");
     }
 }

@@ -22,4 +22,10 @@ pub(crate) enum Commands {
         /// Your indieGala password, can be left blank for interactive login
         password: Option<String>,
     },
+    /// Logout from your indieGala account
+    Logout,
+    /// Sync user info and library
+    Sync,
+    /// List your library
+    Library,
 }
