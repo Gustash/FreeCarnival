@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
 use crate::constants::CONTENT_URL;
@@ -57,7 +58,7 @@ pub(crate) async fn get_latest_build_number(
 #[derive(Debug, Deserialize, Serialize)]
 pub(crate) struct BuildManifestRecord {
     #[serde(alias = "Size in Bytes")]
-    pub(crate) size_in_bytes: u64,
+    pub(crate) size_in_bytes: usize,
     #[serde(alias = "Chunks")]
     pub(crate) chunks: usize,
     #[serde(alias = "SHA")]
@@ -68,14 +69,22 @@ pub(crate) struct BuildManifestRecord {
     pub(crate) file_name: String,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+pub(crate) struct BuildManifestChunksRecord {
+    #[serde(alias = "ID")]
+    pub(crate) id: u16,
+    #[serde(alias = "Filepath")]
+    pub(crate) file_path: String,
+    #[serde(alias = "Chunk SHA")]
+    pub(crate) sha: String,
+}
+
 pub(crate) async fn get_build_manifest(
     product: &Product,
     build_version: &String,
-) -> Result<Vec<BuildManifestRecord>, reqwest::Error> {
+) -> Result<String, reqwest::Error> {
     let client = GalaRequest::new().client;
 
-    println!("Product: {:?}", product);
-    println!("Build Version: {}", build_version);
     let res = client
         .get(format!(
             "{}/DevShowCaseSourceVolume/dev_fold_{}/{}/{}/{}_manifest.csv",
@@ -88,12 +97,47 @@ pub(crate) async fn get_build_manifest(
         .send()
         .await?;
     let body = res.text().await?;
-    println!("Body: {}", body);
+    Ok(body)
+}
 
-    let mut rdr = csv::Reader::from_reader(body.as_bytes());
-    let mut manifest: Vec<BuildManifestRecord> = vec![];
-    for record in rdr.deserialize::<BuildManifestRecord>() {
-        manifest.push(record.unwrap());
-    }
-    Ok(manifest)
+pub(crate) async fn get_build_manifest_chunks(
+    product: &Product,
+    build_version: &String,
+) -> Result<String, reqwest::Error> {
+    let client = GalaRequest::new().client;
+
+    let res = client
+        .get(format!(
+            "{}/DevShowCaseSourceVolume/dev_fold_{}/{}/{}/{}_manifest_chunks.csv",
+            *CONTENT_URL,
+            product.namespace,
+            product.id_key_name,
+            "win", // TODO: Support other platform downloads
+            build_version,
+        ))
+        .send()
+        .await?;
+    let body = res.text().await?;
+    Ok(body)
+}
+
+pub(crate) async fn download_chunk(
+    product: &Product,
+    chunk_sha: &String,
+) -> Result<Bytes, reqwest::Error> {
+    let client = GalaRequest::new().client;
+
+    let res = client
+        .get(format!(
+            "{}/DevShowCaseSourceVolume/dev_fold_{}/{}/{}/{}",
+            *CONTENT_URL,
+            product.namespace,
+            product.id_key_name,
+            "win", // TODO: Support other platform downloads
+            chunk_sha,
+        ))
+        .send()
+        .await?;
+    let bytes = res.bytes().await?;
+    Ok(bytes)
 }

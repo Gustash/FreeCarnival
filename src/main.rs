@@ -47,7 +47,7 @@ async fn main() {
             }
         }
         Commands::Install { slug } => {
-            let build_number = utils::install(&slug).await;
+            utils::install(&slug).await;
         }
     }
 }
