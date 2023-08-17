@@ -7,11 +7,11 @@ pub(crate) mod auth;
 pub(crate) mod product;
 
 pub(crate) struct GalaRequest {
-    client: reqwest::Client,
+    pub(crate) client: reqwest::Client,
 }
 
 impl GalaRequest {
-    fn new() -> GalaRequest {
+    pub(crate) fn new() -> GalaRequest {
         let mut default_headers = HeaderMap::new();
         default_headers.insert(
             header::CONTENT_TYPE,

@@ -32,7 +32,7 @@ pub(crate) struct UserShowcaseContent {
     user_collection: Option<Vec<Product>>,
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub(crate) struct Product {
     #[serde(alias = ".prod_dev_namespace")]
     pub(crate) namespace: String,

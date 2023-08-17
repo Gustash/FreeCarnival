@@ -19,9 +19,9 @@ struct BuildVersionResponse {
 }
 
 pub(crate) async fn get_latest_build_number(
+    client: &reqwest::Client,
     product: &Product,
 ) -> Result<Option<String>, reqwest::Error> {
-    let client = GalaRequest::new().client;
     let payload = LatestBuildNumberPayload {
         dev_id: product.namespace.to_owned(),
         id_key_name: product.id_key_name.to_owned(),
@@ -80,11 +80,10 @@ pub(crate) struct BuildManifestChunksRecord {
 }
 
 pub(crate) async fn get_build_manifest(
+    client: &reqwest::Client,
     product: &Product,
     build_version: &String,
 ) -> Result<String, reqwest::Error> {
-    let client = GalaRequest::new().client;
-
     let res = client
         .get(format!(
             "{}/DevShowCaseSourceVolume/dev_fold_{}/{}/{}/{}_manifest.csv",
@@ -101,11 +100,10 @@ pub(crate) async fn get_build_manifest(
 }
 
 pub(crate) async fn get_build_manifest_chunks(
+    client: &reqwest::Client,
     product: &Product,
     build_version: &String,
 ) -> Result<String, reqwest::Error> {
-    let client = GalaRequest::new().client;
-
     let res = client
         .get(format!(
             "{}/DevShowCaseSourceVolume/dev_fold_{}/{}/{}/{}_manifest_chunks.csv",
@@ -122,11 +120,10 @@ pub(crate) async fn get_build_manifest_chunks(
 }
 
 pub(crate) async fn download_chunk(
+    client: &reqwest::Client,
     product: &Product,
     chunk_sha: &String,
 ) -> Result<Bytes, reqwest::Error> {
-    let client = GalaRequest::new().client;
-
     let res = client
         .get(format!(
             "{}/DevShowCaseSourceVolume/dev_fold_{}/{}/{}/{}",
