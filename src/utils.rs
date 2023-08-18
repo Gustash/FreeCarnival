@@ -1,10 +1,6 @@
-use std::{
-    collections::HashMap,
-    fmt::format,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{path::PathBuf, sync::Arc};
 
+use bytes::Bytes;
 use crypto::{digest::Digest, md5::Md5};
 use directories::ProjectDirs;
 use os_path::OsPath;
@@ -111,89 +107,31 @@ async fn build_from_manifest(
     // Create cache path if it doesn't exist
     fs::create_dir_all(&*download_path).await?;
 
-    // let mut file_name_md5_map = HashMap::new();
-
-    let mut manifest_rdr = csv::Reader::from_reader(build_manifest_bytes);
-
     let mut manifest_chunks_rdr = csv::Reader::from_reader(build_manifest_chunks_bytes);
-
     for record in manifest_chunks_rdr.deserialize::<BuildManifestChunksRecord>() {
         let record = record.expect("Failed to deserialize chunks manifest");
 
-        let sha_parts = Arc::new(
-            record
-                .sha
-                .split("_")
-                .map(|s| s.to_owned())
-                .collect::<Vec<String>>(),
-        );
-        let file_md5 = &sha_parts[0];
-        let download_path = download_path.join(file_md5);
-        let download_path_exists = match download_path.try_exists() {
-            Ok(exists) => exists,
-            Err(_) => false,
-        };
-        if !download_path_exists {
-            fs::create_dir(&download_path).await?;
+        let ChunkDownloadDetails(file_path, file_exists) =
+            prepare_chunk_batch_folder(&record, &download_path).await?;
+
+        if file_exists {
+            continue;
         }
 
         let client = client.clone();
         let product = product.clone();
         let record = Arc::new(record);
-        let sha_parts = sha_parts.clone();
         thread_handlers.push(tokio::spawn(async move {
-            let chunk_idx = &sha_parts[1];
-            // TODO: Store chunk SHAs
-            let chunk_sha = &sha_parts[2];
-            let file_path = download_path.join(format!("{}.bin", chunk_idx));
-
-            let exists = match file_path.try_exists() {
-                Ok(exists) => exists,
-                Err(_) => false,
-            };
-            if exists {
-                return;
-            }
-
             let chunk = api::product::download_chunk(&client, &product, &record.sha)
                 .await
-                .unwrap();
+                .expect(&format!("Failed to download {}.bin", &record.sha));
 
-            tokio::fs::write(file_path, chunk)
+            println!("File path: {}", file_path.display());
+            save_chunk(&file_path, &chunk)
                 .await
-                .expect(&String::from(format!(
-                    "Failed to download {}.bin",
-                    record.sha
-                )));
+                .expect(&format!("Failed to save {}.bin", &record.sha));
         }));
     }
-
-    // for record in manifest_rdr.deserialize::<BuildManifestRecord>() {
-    //     let record = record.expect("Failed to deserialize build manifest");
-    //     let file_path = install_path.join(&record.file_name);
-    //
-    //     // File Name is a directory. We should create this directory.
-    //     if record.flags == 40 {
-    //         if !file_path.exists() {
-    //             fs::create_dir(file_path).await?;
-    //         }
-    //         continue;
-    //     }
-    //
-    //     let chunks = manifest_chunks
-    //         .by_ref()
-    //         .take(record.chunks)
-    //         .map(|c| c.unwrap())
-    //         .collect::<Vec<BuildManifestChunksRecord>>();
-    //
-    //     let client = client.clone();
-    //     let product = product.clone();
-    //     thread_handlers.push(tokio::spawn(async {
-    //         build_file(client, product, chunks, file_path)
-    //             .await
-    //             .unwrap();
-    //     }));
-    // }
 
     for handler in thread_handlers {
         handler.await.unwrap();
@@ -202,87 +140,127 @@ async fn build_from_manifest(
     // Create install path directory first
     fs::create_dir_all(&*install_path).await?;
     let mut thread_handlers = vec![];
-
     let download_path = Arc::new(download_path);
+
+    let mut manifest_rdr = csv::Reader::from_reader(build_manifest_bytes);
     for record in manifest_rdr.deserialize::<BuildManifestRecord>() {
         let record = record.expect("Failed to deserialize build manifest");
-        let file_path = install_path.join(&record.file_name);
+        let FileDownloadDetails(file_path, is_directory) =
+            prepare_file_folder(&install_path, &record.file_name, record.flags)
+                .await
+                .expect(&format!(
+                    "Failed to prepare install location for {}",
+                    &record.file_name
+                ));
 
-        // File Name is a directory. We should create this directory.
-        if record.flags == 40 {
-            if !file_path.exists() {
-                fs::create_dir(file_path).await?;
-            }
+        if is_directory {
             continue;
         }
 
         let download_path = download_path.clone();
         thread_handlers.push(tokio::spawn(async move {
-            for idx in 0..record.chunks {
-                let file_md5 = file_name_md5(&record.file_name);
-                let chunk_path = download_path.join(file_md5).join(format!("{}.bin", idx));
-                let chunk = fs::read(chunk_path).await.expect("Failed to read chunk");
-                let mut file = fs::OpenOptions::new()
-                    .write(true)
-                    // New file. Create it.
-                    .create(idx == 0)
-                    // File exists. Append contents to existing file.
-                    .append(idx != 0)
-                    .open(&file_path)
-                    .await
-                    .unwrap();
-                file.write(&chunk).await.expect("Failed to write chunk");
-            }
+            build_file(&file_path, &download_path, record.chunks, &record.file_name)
+                .await
+                .expect(&format!(
+                    "Failed to build {} from chunks",
+                    &record.file_name
+                ));
         }));
-
-        // let download_path = download_path_arc.clone();
-        // thread_handlers.push(tokio::spawn(async move {
-        //     build_file(&download_path, file_path, &record.file_name).await;
-        // }));
     }
 
     for handler in thread_handlers {
         handler.await.unwrap();
     }
 
+    // Delete download dir after install
+    if let Err(_) = tokio::fs::remove_dir_all(&*download_path).await {
+        println!(
+            "Failed to delete temporary download folder: {}\n\nYou may want to delete it manually.",
+            &download_path.display()
+        );
+    };
+
     Ok(())
 }
 
-async fn build_file(download_path: &PathBuf, file_path: OsPath, file_name: &String) {
-    let md5 = file_name_md5(file_name);
-    println!("MD5 for {} is {}", file_name, md5);
+struct ChunkDownloadDetails(PathBuf, bool);
+
+async fn prepare_chunk_batch_folder(
+    record: &BuildManifestChunksRecord,
+    base_download_path: &PathBuf,
+) -> tokio::io::Result<ChunkDownloadDetails> {
+    // TODO: Save chunk SHA
+    let sha_parts = record
+        .sha
+        .split("_")
+        .map(|s| s.to_owned())
+        .collect::<Vec<String>>();
+    let file_md5 = &sha_parts[0];
+    let chunk_idx = &sha_parts[1];
+
+    let download_path = base_download_path.join(file_md5);
+    let download_path_exists = match download_path.try_exists() {
+        Ok(exists) => exists,
+        Err(_) => false,
+    };
+    if !download_path_exists {
+        fs::create_dir(&download_path).await?;
+    }
+
+    let file_path = download_path.join(format!("{}.bin", chunk_idx));
+    let file_exists = match file_path.try_exists() {
+        Ok(exists) => exists,
+        Err(_) => false,
+    };
+
+    Ok(ChunkDownloadDetails(file_path, file_exists))
 }
 
-// async fn build_file(
-//     client: Arc<reqwest::Client>,
-//     product: Arc<Product>,
-//     chunks: Vec<BuildManifestChunksRecord>,
-//     file_path: OsPath,
-// ) -> tokio::io::Result<()> {
-//     for chunk_record in chunks {
-//         let chunk = api::product::download_chunk(&client, &product, &chunk_record.sha)
-//             .await
-//             .expect(&String::from(format!(
-//                 "Failed to download chunk {}",
-//                 chunk_record.sha
-//             )));
-//
-//         println!("Exists ({}): {}", file_path, file_path.exists());
-//         // FIXME: Handle errors better in thread
-//         let mut file = fs::OpenOptions::new()
-//             .write(true)
-//             // New file. Create it.
-//             .create(!file_path.exists())
-//             // File exists. Append contents to existing file.
-//             .append(file_path.exists())
-//             .open(&file_path)
-//             .await
-//             .unwrap();
-//         file.write(&chunk).await?;
-//     }
-//
-//     Ok(())
-// }
+async fn save_chunk(file_path: &PathBuf, chunk: &Bytes) -> tokio::io::Result<()> {
+    tokio::fs::write(file_path, chunk).await
+}
+
+struct FileDownloadDetails(OsPath, bool);
+
+async fn prepare_file_folder(
+    base_install_path: &OsPath,
+    file_name: &String,
+    flags: u8,
+) -> tokio::io::Result<FileDownloadDetails> {
+    let file_path = base_install_path.join(file_name);
+    let is_directory = flags == 40;
+
+    // File Name is a directory. We should create this directory.
+    if is_directory && !file_path.exists() {
+        fs::create_dir(&file_path).await?;
+    }
+
+    Ok(FileDownloadDetails(file_path, is_directory))
+}
+
+async fn build_file(
+    file_path: &OsPath,
+    download_path: &PathBuf,
+    num_of_chunks: usize,
+    file_name: &String,
+) -> tokio::io::Result<()> {
+    for idx in 0..num_of_chunks {
+        let file_md5 = file_name_md5(file_name);
+        let chunk_path = download_path.join(file_md5).join(format!("{}.bin", idx));
+        let chunk = fs::read(chunk_path).await.expect("Failed to read chunk");
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            // New file. Create it.
+            .create(idx == 0)
+            // File exists. Append contents to existing file.
+            .append(idx != 0)
+            .open(&file_path)
+            .await?;
+        file.write(&chunk).await?;
+    }
+
+    Ok(())
+}
 
 fn file_name_md5(file_name: &String) -> String {
     let mut file_path_md5 = Md5::new();

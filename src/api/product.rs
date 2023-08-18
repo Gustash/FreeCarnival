@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::constants::CONTENT_URL;
 
-use super::{auth::Product, GalaRequest};
+use super::auth::Product;
 
 #[derive(Debug, Serialize)]
 struct LatestBuildNumberPayload {

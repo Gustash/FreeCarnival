@@ -47,7 +47,14 @@ async fn main() {
             }
         }
         Commands::Install { slug } => {
-            utils::install(&slug).await;
+            match utils::install(&slug).await {
+                Ok(_) => {
+                    println!("Successfully installed {}", &slug);
+                }
+                Err(err) => {
+                    println!("Failed to install {}: {:?}", &slug, err);
+                }
+            };
         }
     }
 }
