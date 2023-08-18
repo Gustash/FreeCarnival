@@ -53,9 +53,7 @@ impl GalaConfig for CookieConfig {
 }
 
 #[derive(Default, Debug, Serialize, Deserialize)]
-pub(crate) struct LibraryConfig {
-    pub(crate) collection: Vec<Product>,
-}
+pub(crate) struct LibraryConfig(pub(crate) Vec<Product>);
 
 impl GalaConfig for LibraryConfig {
     fn load() -> Result<LibraryConfig, ConfyError> {

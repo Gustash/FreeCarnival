@@ -42,7 +42,7 @@ async fn main() {
         },
         Commands::Library => {
             let library = LibraryConfig::load().expect("Failed to load library");
-            for product in library.collection {
+            for product in library.0 {
                 println!("{}", product);
             }
         }

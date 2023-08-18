@@ -109,9 +109,7 @@ pub(crate) async fn sync() -> Result<Option<SyncResult>, reqwest::Error> {
             };
 
             Ok(Some(SyncResult {
-                library_config: LibraryConfig {
-                    collection: user_collection,
-                },
+                library_config: LibraryConfig(user_collection),
                 user_config: UserConfig {
                     user_info: Some(user_info),
                 },

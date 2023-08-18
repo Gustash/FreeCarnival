@@ -22,10 +22,7 @@ use crate::{
 pub(crate) async fn install(slug: &String) -> Result<(), reqwest::Error> {
     let client = GalaRequest::new().client;
     let library = LibraryConfig::load().expect("Failed to load library");
-    let product = library
-        .collection
-        .iter()
-        .find(|p| p.slugged_name == slug.to_owned());
+    let product = library.0.iter().find(|p| p.slugged_name == slug.to_owned());
 
     if let Some(product) = product {
         println!("Found game. Fetching latest version build number...");
