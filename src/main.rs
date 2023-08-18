@@ -59,8 +59,14 @@ async fn main() {
         }
         Commands::Install { slug } => {
             match utils::install(gala_req.client, &slug).await {
-                Ok(_) => {
+                Ok(true) => {
                     println!("Successfully installed {}", &slug);
+                }
+                Ok(false) => {
+                    println!(
+                        "Failed to install {}.\n\nFiles might be missing or corrupted.",
+                        &slug
+                    );
                 }
                 Err(err) => {
                     println!("Failed to install {}: {:?}", &slug, err);

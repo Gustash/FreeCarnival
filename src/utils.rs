@@ -1,4 +1,7 @@
-use std::{io::SeekFrom, sync::Arc};
+use std::{
+    io::SeekFrom,
+    sync::{Arc, Mutex},
+};
 
 use bytes::Bytes;
 use directories::ProjectDirs;
@@ -19,7 +22,10 @@ use crate::{
     constants::MAX_CHUNK_SIZE,
 };
 
-pub(crate) async fn install(client: reqwest::Client, slug: &String) -> Result<(), reqwest::Error> {
+pub(crate) async fn install(
+    client: reqwest::Client,
+    slug: &String,
+) -> Result<bool, reqwest::Error> {
     let library = LibraryConfig::load().expect("Failed to load library");
     let product = library
         .collection
@@ -64,7 +70,7 @@ pub(crate) async fn install(client: reqwest::Client, slug: &String) -> Result<()
                 let product_arc = Arc::new(product.clone());
 
                 println!("Installing game from manifest...");
-                build_from_manifest(
+                let result = build_from_manifest(
                     client_arc,
                     product_arc,
                     build_manifest.as_bytes(),
@@ -74,18 +80,14 @@ pub(crate) async fn install(client: reqwest::Client, slug: &String) -> Result<()
                 .await
                 .expect("Failed to build from manifest");
 
-                println!("Verifying files...");
-                verify(&install_path, build_manifest.as_bytes())
-                    .await
-                    .expect("Failed to verify files");
-                Ok(())
+                Ok(result)
             }
-            None => Ok(()),
+            None => Ok(false),
         };
     }
 
     println!("Could not find {slug} in library");
-    Ok(())
+    Ok(false)
 }
 
 async fn store_build_manifest(
@@ -109,7 +111,8 @@ async fn build_from_manifest(
     build_manifest_bytes: &[u8],
     build_manifest_chunks_bytes: &[u8],
     install_path: &OsPath,
-) -> tokio::io::Result<()> {
+) -> tokio::io::Result<bool> {
+    let result = Arc::new(Mutex::new(true));
     let mut thread_handlers = vec![];
 
     // Create install directory if it doesn't exist
@@ -132,11 +135,24 @@ async fn build_from_manifest(
         let file_path = install_path.join(&record.file_path);
         let client = client.clone();
         let product = product.clone();
+        let result = result.clone();
         let record = Arc::new(record);
         thread_handlers.push(tokio::spawn(async move {
             let chunk = api::product::download_chunk(&client, &product, &record.sha)
                 .await
                 .expect(&format!("Failed to download {}.bin", &record.sha));
+
+            let chunk_sha = &record.sha.split("_").collect::<Vec<&str>>()[2];
+            let chunk_corrupted = !verify_chunk(&chunk, chunk_sha);
+
+            if chunk_corrupted {
+                println!(
+                    "{} failed verification. {} is corrupted.",
+                    &record.sha, &file_path
+                );
+                *result.lock().unwrap() = false;
+                return;
+            }
 
             let offset: u64 = *MAX_CHUNK_SIZE * u64::from(record.id);
             save_chunk(&file_path, &chunk, offset)
@@ -149,7 +165,8 @@ async fn build_from_manifest(
         handler.await?;
     }
 
-    Ok(())
+    let result = *result.lock().unwrap();
+    Ok(result)
 }
 
 async fn save_chunk(file_path: &OsPath, chunk: &Bytes, offset: u64) -> tokio::io::Result<()> {
@@ -225,4 +242,13 @@ fn verify_file_hash(file_path: &OsPath, sha: &str) -> std::io::Result<bool> {
     let file_sha = base16ct::lower::encode_string(&hash);
 
     Ok(file_sha == sha)
+}
+
+fn verify_chunk(chunk: &Bytes, sha: &str) -> bool {
+    let mut hasher = Sha256::new();
+    hasher.update(chunk);
+    let hash = hasher.finalize();
+    let sha_str = base16ct::lower::encode_string(&hash);
+
+    sha_str == sha
 }
