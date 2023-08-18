@@ -67,14 +67,13 @@ pub(crate) async fn install(slug: &String) -> Result<(), reqwest::Error> {
                     .data_dir()
                     .join(&product.slugged_name);
 
-                let install_path_arc = Arc::new(OsPath::from(&install_path));
                 println!("Installing game from manifest...");
                 build_from_manifest(
                     client_arc,
                     product_arc,
                     build_manifest.as_bytes(),
                     build_manifest_chunks.as_bytes(),
-                    install_path_arc,
+                    OsPath::from(&install_path),
                 )
                 .await
                 .expect("Failed to build from manifest");
@@ -108,12 +107,12 @@ async fn build_from_manifest(
     product: Arc<Product>,
     build_manifest_bytes: &[u8],
     build_manifest_chunks_bytes: &[u8],
-    install_path: Arc<OsPath>,
+    install_path: OsPath,
 ) -> tokio::io::Result<()> {
     let mut thread_handlers = vec![];
 
     // Create install directory if it doesn't exist
-    fs::create_dir_all(&*install_path).await?;
+    fs::create_dir_all(&install_path).await?;
 
     println!("Building folder structure...");
     let mut manifest_rdr = csv::Reader::from_reader(build_manifest_bytes);
@@ -128,13 +127,8 @@ async fn build_from_manifest(
     for record in manifest_chunks_rdr.deserialize::<BuildManifestChunksRecord>() {
         let record = record.expect("Failed to deserialize chunks manifest");
 
-        let ChunkDownloadDetails(file_path, file_exists) =
-            prepare_chunk_batch_folder(&record, &install_path).await?;
-
-        if file_exists {
-            continue;
-        }
-
+        // TODO: Verify chunk SHA
+        let file_path = install_path.join(&record.file_path);
         let client = client.clone();
         let product = product.clone();
         let record = Arc::new(record);
@@ -144,9 +138,6 @@ async fn build_from_manifest(
                 .expect(&format!("Failed to download {}.bin", &record.sha));
 
             let offset: u64 = *MAX_CHUNK_SIZE * u64::from(record.id);
-            println!("Offset: {offset}");
-
-            println!("File path: {}", file_path);
             save_chunk(&file_path, &chunk, offset)
                 .await
                 .expect(&format!("Failed to save {}.bin", &record.sha));
@@ -158,18 +149,6 @@ async fn build_from_manifest(
     }
 
     Ok(())
-}
-
-struct ChunkDownloadDetails(OsPath, bool);
-
-async fn prepare_chunk_batch_folder(
-    record: &BuildManifestChunksRecord,
-    base_download_path: &OsPath,
-) -> tokio::io::Result<ChunkDownloadDetails> {
-    // TODO: Verify chunk SHA
-    let file_path = base_download_path.join(&record.file_path);
-    let file_exists = file_path.exists();
-    Ok(ChunkDownloadDetails(file_path, file_exists))
 }
 
 async fn save_chunk(file_path: &OsPath, chunk: &Bytes, offset: u64) -> tokio::io::Result<()> {
