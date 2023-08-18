@@ -1,10 +1,12 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{io::SeekFrom, sync::Arc};
 
 use bytes::Bytes;
-use crypto::{digest::Digest, md5::Md5};
 use directories::ProjectDirs;
 use os_path::OsPath;
-use tokio::{fs, io::AsyncWriteExt};
+use tokio::{
+    fs,
+    io::{AsyncSeekExt, AsyncWriteExt},
+};
 
 use crate::{
     api::{
@@ -14,6 +16,7 @@ use crate::{
         GalaRequest,
     },
     config::{GalaConfig, LibraryConfig},
+    constants::MAX_CHUNK_SIZE,
 };
 
 pub(crate) async fn install(slug: &String) -> Result<(), reqwest::Error> {
@@ -108,19 +111,25 @@ async fn build_from_manifest(
     install_path: Arc<OsPath>,
 ) -> tokio::io::Result<()> {
     let mut thread_handlers = vec![];
-    let project = ProjectDirs::from("rs", "", "openGala").unwrap();
-    let cache_path = project.cache_dir();
-    let download_path = cache_path.join(&product.slugged_name);
-    // Create cache path if it doesn't exist
-    fs::create_dir_all(&*download_path).await?;
 
-    println!("Downloading chunks...");
+    // Create install directory if it doesn't exist
+    fs::create_dir_all(&*install_path).await?;
+
+    println!("Building folder structure...");
+    let mut manifest_rdr = csv::Reader::from_reader(build_manifest_bytes);
+    for record in manifest_rdr.deserialize::<BuildManifestRecord>() {
+        let record = record.expect("Failed to deserialize build manifest");
+
+        prepare_file_folder(&install_path, &record.file_name, record.flags).await?;
+    }
+
+    println!("Building chunks...");
     let mut manifest_chunks_rdr = csv::Reader::from_reader(build_manifest_chunks_bytes);
     for record in manifest_chunks_rdr.deserialize::<BuildManifestChunksRecord>() {
         let record = record.expect("Failed to deserialize chunks manifest");
 
         let ChunkDownloadDetails(file_path, file_exists) =
-            prepare_chunk_batch_folder(&record, &download_path).await?;
+            prepare_chunk_batch_folder(&record, &install_path).await?;
 
         if file_exists {
             continue;
@@ -134,8 +143,11 @@ async fn build_from_manifest(
                 .await
                 .expect(&format!("Failed to download {}.bin", &record.sha));
 
-            println!("File path: {}", file_path.display());
-            save_chunk(&file_path, &chunk)
+            let offset: u64 = *MAX_CHUNK_SIZE * u64::from(record.id);
+            println!("Offset: {offset}");
+
+            println!("File path: {}", file_path);
+            save_chunk(&file_path, &chunk, offset)
                 .await
                 .expect(&format!("Failed to save {}.bin", &record.sha));
         }));
@@ -145,134 +157,42 @@ async fn build_from_manifest(
         handler.await.unwrap();
     }
 
-    // Create install path directory first
-    fs::create_dir_all(&*install_path).await?;
-    let mut thread_handlers = vec![];
-    let download_path = Arc::new(download_path);
-
-    println!("Building files...");
-    let mut manifest_rdr = csv::Reader::from_reader(build_manifest_bytes);
-    for record in manifest_rdr.deserialize::<BuildManifestRecord>() {
-        let record = record.expect("Failed to deserialize build manifest");
-        let FileDownloadDetails(file_path, is_directory) =
-            prepare_file_folder(&install_path, &record.file_name, record.flags)
-                .await
-                .expect(&format!(
-                    "Failed to prepare install location for {}",
-                    &record.file_name
-                ));
-
-        if is_directory {
-            continue;
-        }
-
-        let download_path = download_path.clone();
-        thread_handlers.push(tokio::spawn(async move {
-            build_file(&file_path, &download_path, record.chunks, &record.file_name)
-                .await
-                .expect(&format!(
-                    "Failed to build {} from chunks",
-                    &record.file_name
-                ));
-        }));
-    }
-
-    for handler in thread_handlers {
-        handler.await.unwrap();
-    }
-
-    // Delete download dir after install
-    if let Err(_) = tokio::fs::remove_dir_all(&*download_path).await {
-        println!(
-            "Failed to delete temporary download folder: {}\n\nYou may want to delete it manually.",
-            &download_path.display()
-        );
-    };
-
     Ok(())
 }
 
-struct ChunkDownloadDetails(PathBuf, bool);
+struct ChunkDownloadDetails(OsPath, bool);
 
 async fn prepare_chunk_batch_folder(
     record: &BuildManifestChunksRecord,
-    base_download_path: &PathBuf,
+    base_download_path: &OsPath,
 ) -> tokio::io::Result<ChunkDownloadDetails> {
-    // TODO: Save chunk SHA
-    let sha_parts = record
-        .sha
-        .split("_")
-        .map(|s| s.to_owned())
-        .collect::<Vec<String>>();
-    let file_md5 = &sha_parts[0];
-    let chunk_idx = &sha_parts[1];
-
-    let download_path = base_download_path.join(file_md5);
-    let download_path_exists = match download_path.try_exists() {
-        Ok(exists) => exists,
-        Err(_) => false,
-    };
-    if !download_path_exists {
-        fs::create_dir(&download_path).await?;
-    }
-
-    let file_path = download_path.join(format!("{}.bin", chunk_idx));
-    let file_exists = match file_path.try_exists() {
-        Ok(exists) => exists,
-        Err(_) => false,
-    };
-
+    // TODO: Verify chunk SHA
+    let file_path = base_download_path.join(&record.file_path);
+    let file_exists = file_path.exists();
     Ok(ChunkDownloadDetails(file_path, file_exists))
 }
 
-async fn save_chunk(file_path: &PathBuf, chunk: &Bytes) -> tokio::io::Result<()> {
-    tokio::fs::write(file_path, chunk).await
+async fn save_chunk(file_path: &OsPath, chunk: &Bytes, offset: u64) -> tokio::io::Result<()> {
+    let mut file = tokio::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .open(file_path)
+        .await?;
+    file.seek(SeekFrom::Start(offset)).await?;
+    file.write_all(chunk).await
 }
-
-struct FileDownloadDetails(OsPath, bool);
 
 async fn prepare_file_folder(
     base_install_path: &OsPath,
     file_name: &String,
     flags: u8,
-) -> tokio::io::Result<FileDownloadDetails> {
+) -> tokio::io::Result<()> {
     let file_path = base_install_path.join(file_name);
-    let is_directory = flags == 40;
 
     // File Name is a directory. We should create this directory.
-    if is_directory && !file_path.exists() {
+    if flags == 40 && !file_path.exists() {
         fs::create_dir(&file_path).await?;
     }
 
-    Ok(FileDownloadDetails(file_path, is_directory))
-}
-
-async fn build_file(
-    file_path: &OsPath,
-    download_path: &PathBuf,
-    num_of_chunks: usize,
-    file_name: &String,
-) -> tokio::io::Result<()> {
-    for idx in 0..num_of_chunks {
-        let file_md5 = file_name_md5(file_name);
-        let chunk_path = download_path.join(file_md5).join(format!("{}.bin", idx));
-        let chunk = fs::read(chunk_path).await.expect("Failed to read chunk");
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            // New file. Create it.
-            .create(idx == 0)
-            // File exists. Append contents to existing file.
-            .append(idx != 0)
-            .open(&file_path)
-            .await?;
-        file.write(&chunk).await?;
-    }
-
     Ok(())
-}
-
-fn file_name_md5(file_name: &String) -> String {
-    let mut file_path_md5 = Md5::new();
-    file_path_md5.input_str(file_name);
-    file_path_md5.result_str()
 }

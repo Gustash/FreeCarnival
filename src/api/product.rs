@@ -1,10 +1,6 @@
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-};
+use std::sync::Arc;
 
 use bytes::Bytes;
-use reqwest::header;
 use serde::{Deserialize, Serialize};
 
 use crate::constants::CONTENT_URL;
