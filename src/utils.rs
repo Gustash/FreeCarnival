@@ -3,6 +3,7 @@ use std::{io::SeekFrom, sync::Arc};
 use bytes::Bytes;
 use directories::ProjectDirs;
 use os_path::OsPath;
+use sha2::{Digest, Sha256};
 use tokio::{
     fs,
     io::{AsyncSeekExt, AsyncWriteExt},
@@ -58,6 +59,7 @@ pub(crate) async fn install(client: reqwest::Client, slug: &String) -> Result<()
                     .unwrap()
                     .data_dir()
                     .join(&product.slugged_name);
+                let install_path = OsPath::from(install_path);
                 let client_arc = Arc::new(client);
                 let product_arc = Arc::new(product.clone());
 
@@ -67,10 +69,15 @@ pub(crate) async fn install(client: reqwest::Client, slug: &String) -> Result<()
                     product_arc,
                     build_manifest.as_bytes(),
                     build_manifest_chunks.as_bytes(),
-                    OsPath::from(&install_path),
+                    &install_path,
                 )
                 .await
                 .expect("Failed to build from manifest");
+
+                println!("Verifying files...");
+                verify(&install_path, build_manifest.as_bytes())
+                    .await
+                    .expect("Failed to verify files");
                 Ok(())
             }
             None => Ok(()),
@@ -101,7 +108,7 @@ async fn build_from_manifest(
     product: Arc<Product>,
     build_manifest_bytes: &[u8],
     build_manifest_chunks_bytes: &[u8],
-    install_path: OsPath,
+    install_path: &OsPath,
 ) -> tokio::io::Result<()> {
     let mut thread_handlers = vec![];
 
@@ -139,7 +146,7 @@ async fn build_from_manifest(
     }
 
     for handler in thread_handlers {
-        handler.await.unwrap();
+        handler.await?;
     }
 
     Ok(())
@@ -168,4 +175,54 @@ async fn prepare_file_folder(
     }
 
     Ok(())
+}
+
+async fn verify(install_path: &OsPath, build_manifest_bytes: &[u8]) -> tokio::io::Result<()> {
+    let mut thread_handlers = vec![];
+    let mut manifest = csv::Reader::from_reader(build_manifest_bytes);
+
+    for record in manifest.deserialize::<BuildManifestRecord>() {
+        let record = record.expect("Failed to deserialize build manifest");
+        let local_file_path = install_path.join(&record.file_name);
+
+        thread_handlers.push(tokio::spawn(async move {
+            if record.flags == 40 {
+                // Is directory and doesn't exist
+                if !local_file_path.to_path().is_dir() {
+                    println!("Warning: {} is not a directory", local_file_path);
+                }
+                return;
+            }
+
+            if !local_file_path.exists() {
+                println!("Warning: {} is missing", local_file_path);
+                return;
+            }
+
+            println!("Verifying {}", &record.file_name);
+            match verify_file_hash(&local_file_path, &record.sha) {
+                Ok(true) => println!("{} is valid", &record.file_name),
+                _ => println!(
+                    "Warning: {} does not match the expected signature",
+                    local_file_path
+                ),
+            }
+        }));
+    }
+
+    for handler in thread_handlers {
+        handler.await?;
+    }
+
+    Ok(())
+}
+
+fn verify_file_hash(file_path: &OsPath, sha: &str) -> std::io::Result<bool> {
+    let mut file = std::fs::File::open(file_path)?;
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut file, &mut hasher)?;
+    let hash = hasher.finalize();
+    let file_sha = base16ct::lower::encode_string(&hash);
+
+    Ok(file_sha == sha)
 }
