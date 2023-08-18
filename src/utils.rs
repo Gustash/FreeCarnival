@@ -25,9 +25,10 @@ pub(crate) async fn install(slug: &String) -> Result<(), reqwest::Error> {
         .find(|p| p.slugged_name == slug.to_owned());
 
     if let Some(product) = product {
-        println!("Found game");
+        println!("Found game. Fetching latest version build number...");
         return match api::product::get_latest_build_number(&client, &product).await? {
             Some(build_version) => {
+                println!("Fetching build manifest...");
                 let build_manifest =
                     api::product::get_build_manifest(&client, &product, &build_version).await?;
                 store_build_manifest(
@@ -39,9 +40,16 @@ pub(crate) async fn install(slug: &String) -> Result<(), reqwest::Error> {
                 .await
                 .expect("Failed to save build manifest");
 
-                let build_manifest_chunks =
-                    api::product::get_build_manifest_chunks(&client, &product, &build_version)
-                        .await?;
+                let client_arc = Arc::new(client);
+                let product_arc = Arc::new(product.clone());
+
+                println!("Fetching build manifest chunks...");
+                let build_manifest_chunks = api::product::get_build_manifest_chunks(
+                    client_arc.clone(),
+                    product_arc.clone(),
+                    &build_version,
+                )
+                .await?;
                 store_build_manifest(
                     &build_manifest_chunks,
                     &build_version,
@@ -56,9 +64,8 @@ pub(crate) async fn install(slug: &String) -> Result<(), reqwest::Error> {
                     .data_dir()
                     .join(&product.slugged_name);
 
-                let client_arc = Arc::new(client);
-                let product_arc = Arc::new(product.clone());
                 let install_path_arc = Arc::new(OsPath::from(&install_path));
+                println!("Installing game from manifest...");
                 build_from_manifest(
                     client_arc,
                     product_arc,
@@ -107,6 +114,7 @@ async fn build_from_manifest(
     // Create cache path if it doesn't exist
     fs::create_dir_all(&*download_path).await?;
 
+    println!("Downloading chunks...");
     let mut manifest_chunks_rdr = csv::Reader::from_reader(build_manifest_chunks_bytes);
     for record in manifest_chunks_rdr.deserialize::<BuildManifestChunksRecord>() {
         let record = record.expect("Failed to deserialize chunks manifest");
@@ -142,6 +150,7 @@ async fn build_from_manifest(
     let mut thread_handlers = vec![];
     let download_path = Arc::new(download_path);
 
+    println!("Building files...");
     let mut manifest_rdr = csv::Reader::from_reader(build_manifest_bytes);
     for record in manifest_rdr.deserialize::<BuildManifestRecord>() {
         let record = record.expect("Failed to deserialize build manifest");

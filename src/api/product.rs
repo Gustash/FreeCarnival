@@ -1,4 +1,7 @@
+use std::sync::{Arc, Mutex};
+
 use bytes::Bytes;
+use reqwest::header;
 use serde::{Deserialize, Serialize};
 
 use crate::constants::CONTENT_URL;
@@ -57,26 +60,28 @@ pub(crate) async fn get_latest_build_number(
 
 #[derive(Debug, Deserialize, Serialize)]
 pub(crate) struct BuildManifestRecord {
-    #[serde(alias = "Size in Bytes")]
+    #[serde(rename = "Size in Bytes")]
     pub(crate) size_in_bytes: usize,
-    #[serde(alias = "Chunks")]
+    #[serde(rename = "Chunks")]
     pub(crate) chunks: usize,
-    #[serde(alias = "SHA")]
+    #[serde(rename = "SHA")]
     pub(crate) sha: String,
-    #[serde(alias = "Flags")]
+    #[serde(rename = "Flags")]
     pub(crate) flags: u8,
-    #[serde(alias = "File Name")]
+    #[serde(rename = "File Name")]
     pub(crate) file_name: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub(crate) struct BuildManifestChunksRecord {
-    #[serde(alias = "ID")]
+    #[serde(rename = "ID")]
     pub(crate) id: u16,
-    #[serde(alias = "Filepath")]
+    #[serde(rename = "Filepath")]
     pub(crate) file_path: String,
-    #[serde(alias = "Chunk SHA")]
+    #[serde(rename = "Chunk SHA")]
     pub(crate) sha: String,
+    #[serde(rename = "Size in Bytes", default)]
+    pub(crate) size_in_bytes: usize,
 }
 
 pub(crate) async fn get_build_manifest(
@@ -100,8 +105,8 @@ pub(crate) async fn get_build_manifest(
 }
 
 pub(crate) async fn get_build_manifest_chunks(
-    client: &reqwest::Client,
-    product: &Product,
+    client: Arc<reqwest::Client>,
+    product: Arc<Product>,
     build_version: &String,
 ) -> Result<String, reqwest::Error> {
     let res = client
@@ -116,7 +121,45 @@ pub(crate) async fn get_build_manifest_chunks(
         .send()
         .await?;
     let body = res.text().await?;
-    Ok(body)
+
+    let mut thread_handlers = vec![];
+    let mut manifest = csv::Reader::from_reader(body.as_bytes());
+    let writer = Arc::new(Mutex::new(csv::Writer::from_writer(vec![])));
+    for record in manifest.deserialize::<BuildManifestChunksRecord>() {
+        let mut record = record.expect("Failed to parse chunk record");
+
+        let product = product.clone();
+        let client = client.clone();
+        let writer = writer.clone();
+        thread_handlers.push(tokio::spawn(async move {
+            let res = client
+                .head(get_chunk_url(&product, &record.sha))
+                .send()
+                .await
+                .expect(&format!("Failed to get Content-Length for {}", record.sha));
+            let size = res.headers()[header::CONTENT_LENGTH]
+                .to_str()
+                .unwrap()
+                .parse::<usize>()
+                .unwrap();
+
+            record.size_in_bytes = size;
+            writer
+                .lock()
+                .unwrap()
+                .serialize(record)
+                .expect("Failed to serialize chunk");
+        }));
+    }
+
+    for handler in thread_handlers {
+        handler.await.unwrap();
+    }
+
+    // Move writer out of Arc and Mutex. This is safe because all threads are done.
+    let writer = Arc::try_unwrap(writer).unwrap().into_inner().unwrap();
+    let data = String::from_utf8(writer.into_inner().unwrap()).unwrap();
+    Ok(data)
 }
 
 pub(crate) async fn download_chunk(
@@ -124,17 +167,18 @@ pub(crate) async fn download_chunk(
     product: &Product,
     chunk_sha: &String,
 ) -> Result<Bytes, reqwest::Error> {
-    let res = client
-        .get(format!(
-            "{}/DevShowCaseSourceVolume/dev_fold_{}/{}/{}/{}",
-            *CONTENT_URL,
-            product.namespace,
-            product.id_key_name,
-            "win", // TODO: Support other platform downloads
-            chunk_sha,
-        ))
-        .send()
-        .await?;
+    let res = client.get(get_chunk_url(product, chunk_sha)).send().await?;
     let bytes = res.bytes().await?;
     Ok(bytes)
+}
+
+fn get_chunk_url(product: &Product, chunk_sha: &String) -> String {
+    format!(
+        "{}/DevShowCaseSourceVolume/dev_fold_{}/{}/{}/{}",
+        *CONTENT_URL,
+        product.namespace,
+        product.id_key_name,
+        "win", // TODO: Support other platform downloads
+        chunk_sha,
+    )
 }
