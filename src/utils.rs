@@ -13,16 +13,17 @@ use crate::{
         self,
         auth::Product,
         product::{BuildManifestChunksRecord, BuildManifestRecord},
-        GalaRequest,
     },
     config::{GalaConfig, LibraryConfig},
     constants::MAX_CHUNK_SIZE,
 };
 
-pub(crate) async fn install(slug: &String) -> Result<(), reqwest::Error> {
-    let client = GalaRequest::new().client;
+pub(crate) async fn install(client: reqwest::Client, slug: &String) -> Result<(), reqwest::Error> {
     let library = LibraryConfig::load().expect("Failed to load library");
-    let product = library.0.iter().find(|p| p.slugged_name == slug.to_owned());
+    let product = library
+        .collection
+        .iter()
+        .find(|p| p.slugged_name == slug.to_owned());
 
     if let Some(product) = product {
         println!("Found game. Fetching latest version build number...");
@@ -40,16 +41,10 @@ pub(crate) async fn install(slug: &String) -> Result<(), reqwest::Error> {
                 .await
                 .expect("Failed to save build manifest");
 
-                let client_arc = Arc::new(client);
-                let product_arc = Arc::new(product.clone());
-
                 println!("Fetching build manifest chunks...");
-                let build_manifest_chunks = api::product::get_build_manifest_chunks(
-                    client_arc.clone(),
-                    product_arc.clone(),
-                    &build_version,
-                )
-                .await?;
+                let build_manifest_chunks =
+                    api::product::get_build_manifest_chunks(&client, &product, &build_version)
+                        .await?;
                 store_build_manifest(
                     &build_manifest_chunks,
                     &build_version,
@@ -63,6 +58,8 @@ pub(crate) async fn install(slug: &String) -> Result<(), reqwest::Error> {
                     .unwrap()
                     .data_dir()
                     .join(&product.slugged_name);
+                let client_arc = Arc::new(client);
+                let product_arc = Arc::new(product.clone());
 
                 println!("Installing game from manifest...");
                 build_from_manifest(

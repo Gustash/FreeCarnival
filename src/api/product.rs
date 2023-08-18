@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
@@ -102,8 +100,8 @@ pub(crate) async fn get_build_manifest(
 }
 
 pub(crate) async fn get_build_manifest_chunks(
-    client: Arc<reqwest::Client>,
-    product: Arc<Product>,
+    client: &reqwest::Client,
+    product: &Product,
     build_version: &String,
 ) -> Result<String, reqwest::Error> {
     let res = client

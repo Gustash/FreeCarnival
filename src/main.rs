@@ -1,10 +1,11 @@
 use crate::api::auth;
 use crate::cli::Cli;
 use crate::config::GalaConfig;
-use api::auth::SyncResult;
+use api::{auth::SyncResult, GalaRequest};
 use clap::Parser;
 use cli::Commands;
 use config::{CookieConfig, LibraryConfig, UserConfig};
+use prelude::CookieHeaderMap;
 
 mod api;
 mod cli;
@@ -17,6 +18,8 @@ mod utils;
 async fn main() {
     let args = Cli::parse();
 
+    let mut gala_req = GalaRequest::new();
+
     match args.command {
         Commands::Login { username, password } => {
             let password = match password {
@@ -26,8 +29,16 @@ async fn main() {
                 }
             };
 
-            match auth::login(&username, &password).await {
-                Ok(result) => save_user_info(&result),
+            match auth::login(&gala_req.client, &username, &password).await {
+                Ok(headers) => {
+                    let cookies = headers.to_cookie();
+                    gala_req.update_cookies(cookies);
+                    match auth::sync(&gala_req.client).await {
+                        Ok(result) => save_user_info(&result),
+                        Err(err) => println!("Failed to sync: {err:#?}"),
+                    }
+                }
+
                 Err(err) => println!("Failed to login: {err:#?}"),
             }
         }
@@ -36,18 +47,18 @@ async fn main() {
             CookieConfig::clear().expect("Error clearing cookies");
             LibraryConfig::clear().expect("Error clearing library");
         }
-        Commands::Sync => match auth::sync().await {
+        Commands::Sync => match auth::sync(&gala_req.client).await {
             Ok(result) => save_user_info(&result),
             Err(err) => println!("Failed to sync: {err:#?}"),
         },
         Commands::Library => {
             let library = LibraryConfig::load().expect("Failed to load library");
-            for product in library.0 {
+            for product in library.collection {
                 println!("{}", product);
             }
         }
         Commands::Install { slug } => {
-            match utils::install(&slug).await {
+            match utils::install(gala_req.client, &slug).await {
                 Ok(_) => {
                     println!("Successfully installed {}", &slug);
                 }

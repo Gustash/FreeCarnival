@@ -2,8 +2,7 @@ use reqwest::header::HeaderMap;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    api::GalaRequest,
-    config::{CookieConfig, GalaConfig, LibraryConfig, UserConfig},
+    config::{CookieConfig, LibraryConfig, UserConfig},
     constants::BASE_URL,
     prelude::*,
 };
@@ -61,29 +60,21 @@ impl std::fmt::Display for Product {
 }
 
 pub(crate) async fn login(
+    client: &reqwest::Client,
     username: &String,
     password: &String,
-) -> Result<Option<SyncResult>, reqwest::Error> {
+) -> Result<HeaderMap, reqwest::Error> {
     let params = [("usre", username), ("usrp", password)];
-    let gala_req = GalaRequest::new();
-    let client = &gala_req.client;
     let res = client
         .post(format!("{}/login_new/gcl", *BASE_URL))
         .form(&params)
         .send()
         .await?;
-    let raw_cookies = get_raw_cookies(res.headers());
-    CookieConfig {
-        cookies: raw_cookies,
-    }
-    .store()
-    .expect("Failed to save cookie config");
 
-    sync().await
+    Ok(res.headers().clone())
 }
 
-pub(crate) async fn sync() -> Result<Option<SyncResult>, reqwest::Error> {
-    let client = GalaRequest::new().client;
+pub(crate) async fn sync(client: &reqwest::Client) -> Result<Option<SyncResult>, reqwest::Error> {
     let res = client
         .get(format!("{}/login_new/user_info", *BASE_URL))
         .send()
@@ -109,7 +100,9 @@ pub(crate) async fn sync() -> Result<Option<SyncResult>, reqwest::Error> {
             };
 
             Ok(Some(SyncResult {
-                library_config: LibraryConfig(user_collection),
+                library_config: LibraryConfig {
+                    collection: user_collection,
+                },
                 user_config: UserConfig {
                     user_info: Some(user_info),
                 },
