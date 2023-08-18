@@ -26,22 +26,31 @@ pub(crate) struct UserInfo {
     user_id: Option<u64>,
 }
 
-#[derive(serde_query::Deserialize, Serialize, Debug)]
-pub(crate) struct UserShowcaseContent {
-    #[query(".showcase_content.content.user_collection")]
-    user_collection: Option<Vec<Product>>,
+#[derive(Deserialize, Debug)]
+struct UserInfoShowcaseContent {
+    showcase_content: Option<ShowcaseContent>,
+}
+
+#[derive(Deserialize, Debug)]
+struct ShowcaseContent {
+    content: Content,
+}
+
+#[derive(Deserialize, Debug)]
+struct Content {
+    user_collection: Vec<Product>,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub(crate) struct Product {
-    #[serde(alias = ".prod_dev_namespace")]
+    #[serde(alias = "prod_dev_namespace")]
     pub(crate) namespace: String,
-    #[serde(alias = ".prod_slugged_name")]
+    #[serde(alias = "prod_slugged_name")]
     pub(crate) slugged_name: String,
     pub(crate) id: u64,
-    #[serde(alias = ".prod_name")]
+    #[serde(alias = "prod_name")]
     pub(crate) name: String,
-    #[serde(alias = ".prod_id_key_name")]
+    #[serde(alias = "prod_id_key_name")]
     pub(crate) id_key_name: String,
 }
 
@@ -69,6 +78,7 @@ pub(crate) async fn login(
     }
     .store()
     .expect("Failed to save cookie config");
+
     sync().await
 }
 
@@ -87,17 +97,20 @@ pub(crate) async fn sync() -> Result<Option<SyncResult>, reqwest::Error> {
             if user_info.status != "success" || user_info.user_found != "true" {
                 return Ok(None);
             }
-            let user_collection = match serde_json::from_str::<UserShowcaseContent>(&body) {
-                Ok(showcase) => showcase.user_collection,
-                Err(_) => Some(vec![]),
+            let user_collection = match serde_json::from_str::<UserInfoShowcaseContent>(&body) {
+                Ok(user_info) => match user_info.showcase_content {
+                    Some(showcase) => showcase.content.user_collection,
+                    None => vec![],
+                },
+                Err(err) => {
+                    println!("Failed to parse user library: {err:?}");
+                    vec![]
+                }
             };
 
             Ok(Some(SyncResult {
                 library_config: LibraryConfig {
-                    collection: match user_collection {
-                        Some(collection) => collection,
-                        None => vec![],
-                    },
+                    collection: user_collection,
                 },
                 user_config: UserConfig {
                     user_info: Some(user_info),
