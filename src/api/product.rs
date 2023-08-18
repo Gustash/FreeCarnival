@@ -1,4 +1,7 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 use bytes::Bytes;
 use reqwest::header;
@@ -80,8 +83,6 @@ pub(crate) struct BuildManifestChunksRecord {
     pub(crate) file_path: String,
     #[serde(rename = "Chunk SHA")]
     pub(crate) sha: String,
-    #[serde(rename = "Size in Bytes", default)]
-    pub(crate) size_in_bytes: usize,
 }
 
 pub(crate) async fn get_build_manifest(
@@ -121,45 +122,7 @@ pub(crate) async fn get_build_manifest_chunks(
         .send()
         .await?;
     let body = res.text().await?;
-
-    let mut thread_handlers = vec![];
-    let mut manifest = csv::Reader::from_reader(body.as_bytes());
-    let writer = Arc::new(Mutex::new(csv::Writer::from_writer(vec![])));
-    for record in manifest.deserialize::<BuildManifestChunksRecord>() {
-        let mut record = record.expect("Failed to parse chunk record");
-
-        let product = product.clone();
-        let client = client.clone();
-        let writer = writer.clone();
-        thread_handlers.push(tokio::spawn(async move {
-            let res = client
-                .head(get_chunk_url(&product, &record.sha))
-                .send()
-                .await
-                .expect(&format!("Failed to get Content-Length for {}", record.sha));
-            let size = res.headers()[header::CONTENT_LENGTH]
-                .to_str()
-                .unwrap()
-                .parse::<usize>()
-                .unwrap();
-
-            record.size_in_bytes = size;
-            writer
-                .lock()
-                .unwrap()
-                .serialize(record)
-                .expect("Failed to serialize chunk");
-        }));
-    }
-
-    for handler in thread_handlers {
-        handler.await.unwrap();
-    }
-
-    // Move writer out of Arc and Mutex. This is safe because all threads are done.
-    let writer = Arc::try_unwrap(writer).unwrap().into_inner().unwrap();
-    let data = String::from_utf8(writer.into_inner().unwrap()).unwrap();
-    Ok(data)
+    Ok(body)
 }
 
 pub(crate) async fn download_chunk(
