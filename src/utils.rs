@@ -1,7 +1,4 @@
-use std::{
-    io::SeekFrom,
-    sync::{Arc, Mutex},
-};
+use std::{io::SeekFrom, sync::Arc};
 
 use bytes::Bytes;
 use directories::ProjectDirs;
@@ -10,6 +7,7 @@ use sha2::{Digest, Sha256};
 use tokio::{
     fs,
     io::{AsyncSeekExt, AsyncWriteExt},
+    task::JoinHandle,
 };
 
 use crate::{
@@ -112,8 +110,7 @@ async fn build_from_manifest(
     build_manifest_chunks_bytes: &[u8],
     install_path: &OsPath,
 ) -> tokio::io::Result<bool> {
-    let result = Arc::new(Mutex::new(true));
-    let mut thread_handlers = vec![];
+    let mut thread_handlers: Vec<JoinHandle<bool>> = vec![];
 
     // Create install directory if it doesn't exist
     fs::create_dir_all(&install_path).await?;
@@ -135,7 +132,6 @@ async fn build_from_manifest(
         let file_path = install_path.join(&record.file_path);
         let client = client.clone();
         let product = product.clone();
-        let result = result.clone();
         let record = Arc::new(record);
         thread_handlers.push(tokio::spawn(async move {
             let chunk = api::product::download_chunk(&client, &product, &record.sha)
@@ -150,22 +146,25 @@ async fn build_from_manifest(
                     "{} failed verification. {} is corrupted.",
                     &record.sha, &file_path
                 );
-                *result.lock().unwrap() = false;
-                return;
+                return false;
             }
 
             let offset: u64 = *MAX_CHUNK_SIZE * u64::from(record.id);
             save_chunk(&file_path, &chunk, offset)
                 .await
                 .expect(&format!("Failed to save {}.bin", &record.sha));
+
+            true
         }));
     }
 
+    let mut result = true;
     for handler in thread_handlers {
-        handler.await?;
+        if !handler.await? {
+            result = false;
+        };
     }
 
-    let result = *result.lock().unwrap();
     Ok(result)
 }
 
