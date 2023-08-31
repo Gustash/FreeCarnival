@@ -69,7 +69,7 @@ pub(crate) struct BuildManifestRecord {
     pub(crate) file_name: String,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub(crate) struct BuildManifestChunksRecord {
     #[serde(rename = "ID")]
     pub(crate) id: u16,

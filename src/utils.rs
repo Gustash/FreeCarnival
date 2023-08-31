@@ -1,12 +1,13 @@
-use std::{io::SeekFrom, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
 use bytes::Bytes;
 use directories::ProjectDirs;
 use os_path::OsPath;
+use queues::*;
 use sha2::{Digest, Sha256};
 use tokio::{
-    fs,
-    io::{AsyncSeekExt, AsyncWriteExt},
+    fs::{self, File},
+    io::AsyncWriteExt,
     task::JoinHandle,
 };
 
@@ -17,7 +18,6 @@ use crate::{
         product::{BuildManifestChunksRecord, BuildManifestRecord},
     },
     config::{GalaConfig, LibraryConfig},
-    constants::MAX_CHUNK_SIZE,
 };
 
 pub(crate) async fn install(
@@ -111,9 +111,12 @@ async fn build_from_manifest(
     install_path: &OsPath,
 ) -> tokio::io::Result<bool> {
     let mut thread_handlers: Vec<JoinHandle<bool>> = vec![];
+    let mut chunk_queue = queue![];
 
     // Create install directory if it doesn't exist
     fs::create_dir_all(&install_path).await?;
+
+    let mut file_chunk_num_map = HashMap::new();
 
     println!("Building folder structure...");
     let mut manifest_rdr = csv::Reader::from_reader(build_manifest_bytes);
@@ -121,17 +124,35 @@ async fn build_from_manifest(
         let record = record.expect("Failed to deserialize build manifest");
 
         prepare_file_folder(&install_path, &record.file_name, record.flags).await?;
+
+        if record.flags != 40 {
+            file_chunk_num_map.insert(record.file_name.clone(), record.chunks);
+        }
     }
 
+    println!("Building queue...");
+    let mut manifest_chunks_rdr = csv::Reader::from_reader(build_manifest_chunks_bytes);
+    for record in manifest_chunks_rdr.deserialize::<BuildManifestChunksRecord>() {
+        let record = record.expect("Failed to deserialize chunks manifest");
+        let is_last = file_chunk_num_map[&record.file_path] - 1 == usize::from(record.id);
+        if is_last {
+            file_chunk_num_map.remove(&record.file_path);
+        }
+        println!("Adding {} to queue", record.sha);
+        chunk_queue.add((record.clone(), is_last)).unwrap();
+    }
+    drop(file_chunk_num_map);
+
+    let (tx, rx) = crossbeam_channel::bounded(chunk_queue.size());
     println!("Building chunks...");
     let mut manifest_chunks_rdr = csv::Reader::from_reader(build_manifest_chunks_bytes);
     for record in manifest_chunks_rdr.deserialize::<BuildManifestChunksRecord>() {
         let record = record.expect("Failed to deserialize chunks manifest");
 
-        // TODO: Verify chunk SHA
         let file_path = install_path.join(&record.file_path);
         let client = client.clone();
         let product = product.clone();
+        let thread_tx = tx.clone();
         let record = Arc::new(record);
         thread_handlers.push(tokio::spawn(async move {
             let chunk = api::product::download_chunk(&client, &product, &record.sha)
@@ -149,14 +170,59 @@ async fn build_from_manifest(
                 return false;
             }
 
-            let offset: u64 = *MAX_CHUNK_SIZE * u64::from(record.id);
-            save_chunk(&file_path, &chunk, offset)
-                .await
-                .expect(&format!("Failed to save {}.bin", &record.sha));
-
+            thread_tx.send((record, chunk)).unwrap();
             true
         }));
     }
+
+    let install_path = install_path.clone();
+    let write_handler = tokio::spawn(async move {
+        let mut in_buffer = HashMap::new();
+        let mut file_map = HashMap::new();
+        for (record, chunk) in rx {
+            println!("Queue size: {}", chunk_queue.size());
+            println!("Saving {} to memory", record.sha);
+            in_buffer.insert(record.sha.clone(), (record.file_path.clone(), chunk));
+
+            loop {
+                match chunk_queue.peek() {
+                    Ok((next_chunk, is_last_chunk)) => {
+                        if let Some((file_path, bytes)) = in_buffer.remove(&next_chunk.sha) {
+                            if !file_map.contains_key(&file_path) {
+                                let chunk_file_path = install_path.join(&file_path);
+                                println!("Opening {}", chunk_file_path);
+                                let file = open_file(&chunk_file_path)
+                                    .await
+                                    .expect(&format!("Failed to open {}", chunk_file_path));
+                                file_map.insert(file_path.clone(), file);
+                            }
+                            let file = file_map.get_mut(&file_path).unwrap();
+                            chunk_queue.remove().unwrap();
+                            println!("Writing {}", next_chunk.sha);
+                            append_chunk(file, bytes).await.expect(&format!(
+                                "Failed to write {}.bin to {}",
+                                next_chunk.sha, file_path
+                            ));
+
+                            if is_last_chunk {
+                                println!(
+                                    "{} is the last chunk in {}. Closing file",
+                                    next_chunk.sha, file_path
+                                );
+                                file_map.remove(&file_path);
+                            }
+                            continue;
+                        }
+
+                        break;
+                    }
+                    Err(_) => {
+                        break;
+                    }
+                }
+            }
+        }
+    });
 
     let mut result = true;
     for handler in thread_handlers {
@@ -164,18 +230,22 @@ async fn build_from_manifest(
             result = false;
         };
     }
+    drop(tx);
+    write_handler.await?;
 
     Ok(result)
 }
 
-async fn save_chunk(file_path: &OsPath, chunk: &Bytes, offset: u64) -> tokio::io::Result<()> {
-    let mut file = tokio::fs::OpenOptions::new()
-        .write(true)
+async fn open_file(file_path: &OsPath) -> tokio::io::Result<File> {
+    tokio::fs::OpenOptions::new()
         .create(true)
+        .append(true)
         .open(file_path)
-        .await?;
-    file.seek(SeekFrom::Start(offset)).await?;
-    file.write_all(chunk).await
+        .await
+}
+
+async fn append_chunk(file: &mut tokio::fs::File, chunk: Bytes) -> tokio::io::Result<()> {
+    file.write_all(&chunk).await
 }
 
 async fn prepare_file_folder(
