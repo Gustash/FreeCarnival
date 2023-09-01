@@ -8,6 +8,7 @@ use sha2::{Digest, Sha256};
 use tokio::{
     fs::{self, File},
     io::AsyncWriteExt,
+    sync::Mutex,
     task::JoinHandle,
 };
 
@@ -111,6 +112,7 @@ async fn build_from_manifest(
     install_path: &OsPath,
 ) -> tokio::io::Result<bool> {
     let mut thread_handlers: Vec<JoinHandle<bool>> = vec![];
+    let mut write_queue = queue![];
     let mut chunk_queue = queue![];
 
     // Create install directory if it doesn't exist
@@ -138,81 +140,57 @@ async fn build_from_manifest(
         if is_last {
             file_chunk_num_map.remove(&record.file_path);
         }
-        println!("Adding {} to queue", record.sha);
-        chunk_queue.add((record.clone(), is_last)).unwrap();
+        write_queue.add((record.sha.clone(), is_last)).unwrap();
+        chunk_queue.add(record).unwrap();
     }
     drop(file_chunk_num_map);
 
-    let (tx, rx) = crossbeam_channel::bounded(chunk_queue.size());
-    println!("Building chunks...");
-    let mut manifest_chunks_rdr = csv::Reader::from_reader(build_manifest_chunks_bytes);
-    for record in manifest_chunks_rdr.deserialize::<BuildManifestChunksRecord>() {
-        let record = record.expect("Failed to deserialize chunks manifest");
-
-        let file_path = install_path.join(&record.file_path);
-        let client = client.clone();
-        let product = product.clone();
-        let thread_tx = tx.clone();
-        let record = Arc::new(record);
-        thread_handlers.push(tokio::spawn(async move {
-            let chunk = api::product::download_chunk(&client, &product, &record.sha)
-                .await
-                .expect(&format!("Failed to download {}.bin", &record.sha));
-
-            let chunk_sha = &record.sha.split("_").collect::<Vec<&str>>()[2];
-            let chunk_corrupted = !verify_chunk(&chunk, chunk_sha);
-
-            if chunk_corrupted {
-                println!(
-                    "{} failed verification. {} is corrupted.",
-                    &record.sha, &file_path
-                );
-                return false;
-            }
-
-            thread_tx.send((record, chunk)).unwrap();
-            true
-        }));
-    }
+    let max_threads = 1024; // TODO: Make variable
+    let (tx, rx) =
+        crossbeam_channel::bounded::<(BuildManifestChunksRecord, Bytes)>(write_queue.size());
+    let (ready_tx, ready_rx) = crossbeam_channel::bounded(max_threads);
 
     let install_path = install_path.clone();
+    println!("Spawning write thread...");
     let write_handler = tokio::spawn(async move {
         let mut in_buffer = HashMap::new();
         let mut file_map = HashMap::new();
         for (record, chunk) in rx {
-            println!("Queue size: {}", chunk_queue.size());
-            println!("Saving {} to memory", record.sha);
             in_buffer.insert(record.sha.clone(), (record.file_path.clone(), chunk));
 
             loop {
-                match chunk_queue.peek() {
+                match write_queue.peek() {
                     Ok((next_chunk, is_last_chunk)) => {
-                        if let Some((file_path, bytes)) = in_buffer.remove(&next_chunk.sha) {
+                        if let Some((file_path, bytes)) = in_buffer.remove(&next_chunk) {
                             if !file_map.contains_key(&file_path) {
                                 let chunk_file_path = install_path.join(&file_path);
-                                println!("Opening {}", chunk_file_path);
                                 let file = open_file(&chunk_file_path)
                                     .await
                                     .expect(&format!("Failed to open {}", chunk_file_path));
                                 file_map.insert(file_path.clone(), file);
                             }
                             let file = file_map.get_mut(&file_path).unwrap();
-                            chunk_queue.remove().unwrap();
-                            println!("Writing {}", next_chunk.sha);
+                            write_queue.remove().unwrap();
+                            println!("Writing {}", next_chunk);
                             append_chunk(file, bytes).await.expect(&format!(
                                 "Failed to write {}.bin to {}",
-                                next_chunk.sha, file_path
+                                next_chunk, file_path
                             ));
 
                             if is_last_chunk {
-                                println!(
-                                    "{} is the last chunk in {}. Closing file",
-                                    next_chunk.sha, file_path
-                                );
                                 file_map.remove(&file_path);
                             }
+
+                            // Notify download threads that a download is ready
+                            ready_tx.send(()).unwrap();
                             continue;
                         }
+
+                        println!(
+                            "Not ready to write {}: {} pending",
+                            next_chunk,
+                            in_buffer.len()
+                        );
 
                         break;
                     }
@@ -224,13 +202,68 @@ async fn build_from_manifest(
         }
     });
 
+    {
+        println!("Downloading chunks...");
+        let chunk_queue_arc = Arc::new(Mutex::new(chunk_queue));
+        let mut active_threads = 0;
+        loop {
+            let client = client.clone();
+            let product = product.clone();
+            let queue = chunk_queue_arc.clone();
+            let ready_rx = ready_rx.clone();
+            let thread_tx = tx.clone();
+            active_threads += 1;
+            let record = {
+                let mut queue = queue.lock().await;
+                match queue.remove() {
+                    Ok(record) => record,
+                    Err(_) => break,
+                }
+            };
+            thread_handlers.push(tokio::spawn(async move {
+                let chunk = api::product::download_chunk(&client, &product, &record.sha)
+                    .await
+                    .expect(&format!("Failed to download {}.bin", &record.sha));
+
+                let chunk_sha = &record.sha.split("_").collect::<Vec<&str>>()[2];
+                let chunk_corrupted = !verify_chunk(&chunk, chunk_sha);
+
+                if chunk_corrupted {
+                    println!(
+                        "{} failed verification. {} is corrupted.",
+                        &record.sha, &record.file_path
+                    );
+                    return false;
+                }
+
+                thread_tx.send((record, chunk)).unwrap();
+
+                true
+            }));
+
+            if active_threads >= max_threads {
+                match ready_rx.recv() {
+                    Ok(()) => {
+                        active_threads -= 1;
+                    }
+                    Err(_) => {
+                        println!("Channel disconnected");
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    drop(tx);
+
+    println!("Waiting for download threads to finish...");
     let mut result = true;
     for handler in thread_handlers {
         if !handler.await? {
             result = false;
         };
     }
-    drop(tx);
+    println!("Waiting for write thread to finish...");
     write_handler.await?;
 
     Ok(result)
