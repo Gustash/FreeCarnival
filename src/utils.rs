@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use bytes::Bytes;
 use directories::ProjectDirs;
@@ -6,9 +6,9 @@ use os_path::OsPath;
 use queues::*;
 use sha2::{Digest, Sha256};
 use tokio::{
-    fs::{self, File},
+    fs::File,
     io::AsyncWriteExt,
-    sync::Mutex,
+    sync::{OwnedSemaphorePermit, Semaphore},
     task::JoinHandle,
 };
 
@@ -98,10 +98,10 @@ async fn store_build_manifest(
     // TODO: Move appName to constant
     let project = ProjectDirs::from("rs", "", "openGala").unwrap();
     let path = project.config_dir().join("manifests").join(product_slug);
-    fs::create_dir_all(&path).await?;
+    tokio::fs::create_dir_all(&path).await?;
 
     let path = path.join(format!("{}_{}.csv", build_number, file_suffix));
-    fs::write(path, body.as_bytes()).await
+    tokio::fs::write(path, body.as_bytes()).await
 }
 
 async fn build_from_manifest(
@@ -116,7 +116,7 @@ async fn build_from_manifest(
     let mut chunk_queue = queue![];
 
     // Create install directory if it doesn't exist
-    fs::create_dir_all(&install_path).await?;
+    tokio::fs::create_dir_all(&install_path).await?;
 
     let mut file_chunk_num_map = HashMap::new();
 
@@ -147,21 +147,38 @@ async fn build_from_manifest(
 
     let max_threads = 1024; // TODO: Make variable
     let (tx, rx) =
-        crossbeam_channel::bounded::<(BuildManifestChunksRecord, Bytes)>(write_queue.size());
-    let (ready_tx, ready_rx) = crossbeam_channel::bounded(max_threads);
+        crossbeam_channel::unbounded::<(BuildManifestChunksRecord, Bytes, OwnedSemaphorePermit)>();
 
     let install_path = install_path.clone();
     println!("Spawning write thread...");
     let write_handler = tokio::spawn(async move {
+        println!("Write thread started.");
         let mut in_buffer = HashMap::new();
         let mut file_map = HashMap::new();
-        for (record, chunk) in rx {
-            in_buffer.insert(record.sha.clone(), (record.file_path.clone(), chunk));
+        while write_queue.size() > 0 {
+            println!("Waiting to receive chunk...");
+            let (record, chunk, permit) = match rx.recv_timeout(Duration::from_secs(1)) {
+                Ok(msg) => msg,
+                Err(_) => {
+                    let timeout_ms = 1;
+                    println!("Write thread timed out. Waiting {} ms", timeout_ms);
+                    // Sleep thread momentarily so other futures can continue
+                    tokio::time::sleep(Duration::from_millis(timeout_ms)).await;
+                    continue;
+                }
+            };
+
+            println!("Received data from download thread.");
+            in_buffer.insert(
+                record.sha.clone(),
+                (record.file_path.clone(), chunk, permit),
+            );
 
             loop {
+                println!("Entering loop to process chunks.");
                 match write_queue.peek() {
                     Ok((next_chunk, is_last_chunk)) => {
-                        if let Some((file_path, bytes)) = in_buffer.remove(&next_chunk) {
+                        if let Some((file_path, bytes, permit)) = in_buffer.remove(&next_chunk) {
                             if !file_map.contains_key(&file_path) {
                                 let chunk_file_path = install_path.join(&file_path);
                                 let file = open_file(&chunk_file_path)
@@ -180,9 +197,8 @@ async fn build_from_manifest(
                             if is_last_chunk {
                                 file_map.remove(&file_path);
                             }
+                            drop(permit);
 
-                            // Notify download threads that a download is ready
-                            ready_tx.send(()).unwrap();
                             continue;
                         }
 
@@ -192,69 +208,59 @@ async fn build_from_manifest(
                             in_buffer.len()
                         );
 
+                        println!("Exiting loop to process chunks.");
                         break;
                     }
                     Err(_) => {
-                        break;
+                        println!("No more chunks to write");
+                        return;
                     }
                 }
             }
         }
+        println!("Write thread finished.");
     });
 
-    {
-        println!("Downloading chunks...");
-        let chunk_queue_arc = Arc::new(Mutex::new(chunk_queue));
-        let mut active_threads = 0;
-        loop {
-            let client = client.clone();
-            let product = product.clone();
-            let queue = chunk_queue_arc.clone();
-            let ready_rx = ready_rx.clone();
-            let thread_tx = tx.clone();
-            active_threads += 1;
-            let record = {
-                let mut queue = queue.lock().await;
-                match queue.remove() {
-                    Ok(record) => record,
-                    Err(_) => break,
-                }
-            };
-            thread_handlers.push(tokio::spawn(async move {
-                let chunk = api::product::download_chunk(&client, &product, &record.sha)
-                    .await
-                    .expect(&format!("Failed to download {}.bin", &record.sha));
+    println!("Downloading chunks...");
+    let semaphore = Arc::new(Semaphore::new(max_threads));
+    while let Ok(record) = chunk_queue.remove() {
+        let client = client.clone();
+        let product = product.clone();
+        let thread_tx = tx.clone();
+        let permit = semaphore.clone().acquire_owned().await.unwrap();
 
-                let chunk_sha = &record.sha.split("_").collect::<Vec<&str>>()[2];
-                let chunk_corrupted = !verify_chunk(&chunk, chunk_sha);
+        thread_handlers.push(tokio::spawn(async move {
+            println!("Downloading {}", record.sha);
+            let chunk = api::product::download_chunk(&client, &product, &record.sha)
+                .await
+                .expect(&format!("Failed to download {}.bin", &record.sha));
 
-                if chunk_corrupted {
-                    println!(
-                        "{} failed verification. {} is corrupted.",
-                        &record.sha, &record.file_path
-                    );
-                    return false;
-                }
+            let chunk_sha = &record.sha.split("_").collect::<Vec<&str>>()[2];
+            println!("Verifying {}", record.sha);
+            let chunk_corrupted = !verify_chunk(&chunk, chunk_sha);
 
-                thread_tx.send((record, chunk)).unwrap();
-
-                true
-            }));
-
-            if active_threads >= max_threads {
-                match ready_rx.recv() {
-                    Ok(()) => {
-                        active_threads -= 1;
-                    }
-                    Err(_) => {
-                        println!("Channel disconnected");
-                        break;
-                    }
-                }
+            if chunk_corrupted {
+                println!(
+                    "{} failed verification. {} is corrupted.",
+                    &record.sha, &record.file_path
+                );
+                return false;
             }
-        }
+
+            println!(
+                "Sending {} to writer thread ({})",
+                record.sha,
+                if thread_tx.is_empty() {
+                    "empty"
+                } else {
+                    "not empty"
+                }
+            );
+            thread_tx.send((record, chunk, permit)).unwrap();
+
+            true
+        }));
     }
-    drop(tx);
 
     println!("Waiting for download threads to finish...");
     let mut result = true;
@@ -290,7 +296,7 @@ async fn prepare_file_folder(
 
     // File Name is a directory. We should create this directory.
     if flags == 40 && !file_path.exists() {
-        fs::create_dir(&file_path).await?;
+        tokio::fs::create_dir(&file_path).await?;
     }
 
     Ok(())
