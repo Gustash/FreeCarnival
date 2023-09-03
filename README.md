@@ -5,7 +5,7 @@
 ## Planned features:
 
 - [x] Authentication
-- [ ] Installing games
+- [x] Installing games
 - [ ] Updating games
 - [ ] Uninstalling games
 - [ ] Launching games
