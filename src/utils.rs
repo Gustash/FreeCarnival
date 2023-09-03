@@ -103,6 +103,10 @@ pub(crate) async fn install<'a>(
     }
 }
 
+pub(crate) async fn uninstall(install_path: &PathBuf) -> tokio::io::Result<()> {
+    tokio::fs::remove_dir_all(install_path).await
+}
+
 async fn store_build_manifest(
     body: &Bytes,
     build_number: &String,

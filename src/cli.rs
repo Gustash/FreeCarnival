@@ -52,4 +52,11 @@ pub(crate) enum Commands {
         #[arg(long)]
         path: Option<PathBuf>,
     },
+    /// Uninstalls a game
+    Uninstall {
+        slug: String,
+        /// Remove game from installed config but do not delete install folder.
+        #[arg(long, default_value_t = false)]
+        keep: bool,
+    },
 }

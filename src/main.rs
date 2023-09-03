@@ -103,6 +103,40 @@ async fn main() {
                 }
             };
         }
+        Commands::Uninstall { slug, keep } => {
+            let mut installed = InstalledConfig::load().expect("Failed to load installed");
+            let install_info = match installed.remove(&slug) {
+                Some(info) => info,
+                None => {
+                    println!("{slug} is not installed.");
+                    return;
+                }
+            };
+
+            let folder_removed = if keep {
+                false
+            } else {
+                match utils::uninstall(&install_info.install_path).await {
+                    Ok(()) => true,
+                    Err(err) => {
+                        println!("Failed to uninstall {slug}: {:?}", err);
+                        false
+                    }
+                }
+            };
+            installed
+                .store()
+                .expect("Failed to update installed config");
+            println!(
+                "{slug} uninstalled successfuly. {} was {}.",
+                install_info.install_path.display(),
+                if folder_removed {
+                    "removed"
+                } else {
+                    "not removed"
+                }
+            );
+        }
     }
 }
 
