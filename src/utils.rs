@@ -18,7 +18,7 @@ use crate::{
         auth::Product,
         product::{BuildManifestChunksRecord, BuildManifestRecord},
     },
-    config::{GalaConfig, LibraryConfig},
+    config::{GalaConfig, InstalledConfig, LibraryConfig},
 };
 
 pub(crate) async fn install<'a>(
@@ -87,8 +87,8 @@ pub(crate) async fn install<'a>(
     let result = build_from_manifest(
         client_arc,
         product_arc,
-        build_manifest,
-        build_manifest_chunks,
+        build_manifest.as_bytes(),
+        build_manifest_chunks.as_bytes(),
         install_path.into(),
         max_download_workers,
     )
@@ -107,8 +107,42 @@ pub(crate) async fn uninstall(install_path: &PathBuf) -> tokio::io::Result<()> {
     tokio::fs::remove_dir_all(install_path).await
 }
 
+pub(crate) async fn check_updates(
+    client: &reqwest::Client,
+    library: LibraryConfig,
+    installed: InstalledConfig,
+) -> tokio::io::Result<HashMap<String, String>> {
+    let mut available_updates = HashMap::new();
+    for (slug, info) in installed {
+        println!("Checking if {slug} has updates...");
+        let product = match library.collection.iter().find(|p| p.slugged_name == slug) {
+            Some(p) => p,
+            None => {
+                println!("Couldn't find {slug} in library. Try running `sync` first.");
+                continue;
+            }
+        };
+        let latest_version = match api::product::get_latest_build_number(client, product).await {
+            Ok(Some(v)) => v,
+            Ok(None) => {
+                println!("Couldn't find the latest version of {slug}");
+                continue;
+            }
+            Err(err) => {
+                println!("Failed to fetch latest version for {slug}: {:?}", err);
+                continue;
+            }
+        };
+
+        if info.version != latest_version {
+            available_updates.insert(slug, latest_version);
+        }
+    }
+    Ok(available_updates)
+}
+
 async fn store_build_manifest(
-    body: &Bytes,
+    body: &String,
     build_number: &String,
     product_slug: &String,
     file_suffix: &str,
@@ -122,11 +156,26 @@ async fn store_build_manifest(
     tokio::fs::write(path, body).await
 }
 
+async fn read_build_manifest(
+    build_number: &String,
+    product_slug: &String,
+    file_suffix: &str,
+) -> tokio::io::Result<String> {
+    // TODO: Move appName to constant
+    let project = ProjectDirs::from("rs", "", "openGala").unwrap();
+    let path = project
+        .config_dir()
+        .join("manifests")
+        .join(product_slug)
+        .join(format!("{}_{}.csv", build_number, file_suffix));
+    tokio::fs::read_to_string(path).await
+}
+
 async fn build_from_manifest(
     client: Arc<reqwest::Client>,
     product: Arc<Product>,
-    build_manifest_bytes: Bytes,
-    build_manifest_chunks_bytes: Bytes,
+    build_manifest_bytes: &[u8],
+    build_manifest_chunks_bytes: &[u8],
     install_path: OsPath,
     max_download_workers: usize,
 ) -> tokio::io::Result<bool> {
@@ -140,7 +189,7 @@ async fn build_from_manifest(
     let mut file_chunk_num_map = HashMap::new();
 
     println!("Building folder structure...");
-    let mut manifest_rdr = csv::Reader::from_reader(&build_manifest_bytes[..]);
+    let mut manifest_rdr = csv::Reader::from_reader(build_manifest_bytes);
     for record in manifest_rdr.deserialize::<BuildManifestRecord>() {
         let record = record.expect("Failed to deserialize build manifest");
 
@@ -150,10 +199,9 @@ async fn build_from_manifest(
             file_chunk_num_map.insert(record.file_name.clone(), record.chunks);
         }
     }
-    drop(build_manifest_bytes);
 
     println!("Building queue...");
-    let mut manifest_chunks_rdr = csv::Reader::from_reader(&build_manifest_chunks_bytes[..]);
+    let mut manifest_chunks_rdr = csv::Reader::from_reader(build_manifest_chunks_bytes);
     for record in manifest_chunks_rdr.deserialize::<BuildManifestChunksRecord>() {
         let record = record.expect("Failed to deserialize chunks manifest");
         let is_last = file_chunk_num_map[&record.file_path] - 1 == usize::from(record.id);
@@ -163,7 +211,6 @@ async fn build_from_manifest(
         write_queue.add((record.sha.clone(), is_last)).unwrap();
         chunk_queue.add(record).unwrap();
     }
-    drop(build_manifest_chunks_bytes);
     drop(file_chunk_num_map);
 
     let (tx, rx) =

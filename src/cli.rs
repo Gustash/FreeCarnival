@@ -59,4 +59,6 @@ pub(crate) enum Commands {
         #[arg(long, default_value_t = false)]
         keep: bool,
     },
+    /// Lists available updates for installed games.
+    ListUpdates,
 }

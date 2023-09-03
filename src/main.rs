@@ -137,6 +137,27 @@ async fn main() {
                 }
             );
         }
+        Commands::ListUpdates => {
+            let installed = InstalledConfig::load().expect("Failed to load installed");
+            let library = LibraryConfig::load().expect("Failed to load library");
+
+            let gala_req = GalaRequest::new();
+            match utils::check_updates(&gala_req.client, library, installed).await {
+                Ok(available_updates) => {
+                    if available_updates.is_empty() {
+                        println!("No available updates");
+                        return;
+                    }
+
+                    for (slug, latest_version) in available_updates {
+                        println!("{slug} has an update -> {latest_version}");
+                    }
+                }
+                Err(err) => {
+                    println!("Failed to check for updates: {:?}", err);
+                }
+            };
+        }
     }
 }
 

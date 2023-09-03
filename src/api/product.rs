@@ -82,7 +82,7 @@ pub(crate) async fn get_build_manifest(
     client: &reqwest::Client,
     product: &Product,
     build_version: &String,
-) -> Result<Bytes, reqwest::Error> {
+) -> Result<String, reqwest::Error> {
     let res = client
         .get(format!(
             "{}/DevShowCaseSourceVolume/dev_fold_{}/{}/{}/{}_manifest.csv",
@@ -94,7 +94,7 @@ pub(crate) async fn get_build_manifest(
         ))
         .send()
         .await?;
-    let body = res.bytes().await?;
+    let body = res.text().await?;
     Ok(body)
 }
 
@@ -102,7 +102,7 @@ pub(crate) async fn get_build_manifest_chunks(
     client: &reqwest::Client,
     product: &Product,
     build_version: &String,
-) -> Result<Bytes, reqwest::Error> {
+) -> Result<String, reqwest::Error> {
     let res = client
         .get(format!(
             "{}/DevShowCaseSourceVolume/dev_fold_{}/{}/{}/{}_manifest_chunks.csv",
@@ -114,7 +114,7 @@ pub(crate) async fn get_build_manifest_chunks(
         ))
         .send()
         .await?;
-    let body = res.bytes().await?;
+    let body = res.text().await?;
     Ok(body)
 }
 
