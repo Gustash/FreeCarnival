@@ -1,7 +1,12 @@
+use std::collections::HashMap;
+
 use confy::ConfyError;
 use serde::{Deserialize, Serialize};
 
-use crate::api::auth::{Product, UserInfo};
+use crate::{
+    api::auth::{Product, UserInfo},
+    shared::models::InstallInfo,
+};
 
 pub(crate) trait GalaConfig
 where
@@ -68,5 +73,21 @@ impl GalaConfig for LibraryConfig {
 
     fn clear() -> Result<(), ConfyError> {
         confy::store("openGala", "library", LibraryConfig::default())
+    }
+}
+
+pub(crate) type InstalledConfig = HashMap<String, InstallInfo>;
+
+impl GalaConfig for InstalledConfig {
+    fn load() -> Result<Self, ConfyError> {
+        confy::load::<Self>("openGala", "installed")
+    }
+
+    fn store(&self) -> Result<(), ConfyError> {
+        confy::store("openGala", "installed", self)
+    }
+
+    fn clear() -> Result<(), ConfyError> {
+        confy::store("openGala", "installed", Self::default())
     }
 }

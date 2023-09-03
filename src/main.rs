@@ -1,6 +1,7 @@
-use crate::api::auth;
 use crate::cli::Cli;
 use crate::config::GalaConfig;
+use crate::shared::models::InstallInfo;
+use crate::{api::auth, config::InstalledConfig};
 use api::{auth::SyncResult, GalaRequest};
 use clap::Parser;
 use cli::Commands;
@@ -13,6 +14,7 @@ mod cli;
 mod config;
 mod constants;
 mod prelude;
+mod shared;
 mod utils;
 
 #[tokio::main]
@@ -65,6 +67,12 @@ async fn main() {
             path,
             base_path,
         } => {
+            let mut installed = InstalledConfig::load().expect("Failed to load installed");
+            if installed.contains_key(&slug) {
+                println!("{slug} already installed.");
+                return;
+            }
+
             let install_path = match (path, base_path) {
                 (Some(path), _) => path,
                 (None, Some(base_path)) => base_path.join(&slug),
@@ -73,20 +81,22 @@ async fn main() {
             match utils::install(
                 gala_req.client,
                 &slug,
-                install_path,
+                &install_path,
                 version,
                 max_download_workers,
             )
             .await
             {
-                Ok(true) => {
-                    println!("Successfully installed {}", &slug);
+                Ok(Ok(installed_version)) => {
+                    println!("Successfully installed {} ({})", &slug, &installed_version);
+
+                    installed.insert(slug, InstallInfo::new(install_path, installed_version));
+                    installed
+                        .store()
+                        .expect("Failed to update installed config");
                 }
-                Ok(false) => {
-                    println!(
-                        "Failed to install {}.\n\nFiles might be missing or corrupted.",
-                        &slug
-                    );
+                Ok(Err(err)) => {
+                    println!("Failed to install {}: {:?}", &slug, err);
                 }
                 Err(err) => {
                     println!("Failed to install {}: {:?}", &slug, err);

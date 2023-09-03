@@ -21,13 +21,13 @@ use crate::{
     config::{GalaConfig, LibraryConfig},
 };
 
-pub(crate) async fn install(
+pub(crate) async fn install<'a>(
     client: reqwest::Client,
     slug: &String,
-    install_path: PathBuf,
+    install_path: &PathBuf,
     version: Option<String>,
     max_download_workers: usize,
-) -> Result<bool, reqwest::Error> {
+) -> Result<Result<String, &'a str>, reqwest::Error> {
     let library = LibraryConfig::load().expect("Failed to load library");
     let product = match library
         .collection
@@ -36,8 +36,7 @@ pub(crate) async fn install(
     {
         Some(product) => product,
         None => {
-            println!("Could not find {slug} in library");
-            return Ok(false);
+            return Ok(Err("Could not find game in library"));
         }
     };
 
@@ -53,8 +52,7 @@ pub(crate) async fn install(
         None => match api::product::get_latest_build_number(&client, &product).await? {
             Some(version) => version,
             None => {
-                println!("Failed to fetch latest build number. Cannot install.");
-                return Ok(false);
+                return Ok(Err("Failed to fetch latest build number. Cannot install."));
             }
         },
     };
@@ -97,7 +95,12 @@ pub(crate) async fn install(
     .await
     .expect("Failed to build from manifest");
 
-    Ok(result)
+    match result {
+        true => Ok(Ok(build_version)),
+        false => Ok(Err(
+            "Some chunks failed verification. Failed to install game.",
+        )),
+    }
 }
 
 async fn store_build_manifest(
