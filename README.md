@@ -7,5 +7,5 @@
 - [x] Authentication
 - [x] Installing games
 - [ ] Updating games
-- [ ] Uninstalling games
+- [x] Uninstalling games
 - [ ] Launching games
