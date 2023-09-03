@@ -24,6 +24,7 @@ use crate::{
 pub(crate) async fn install(
     client: reqwest::Client,
     slug: &String,
+    max_download_workers: usize,
 ) -> Result<bool, reqwest::Error> {
     let library = LibraryConfig::load().expect("Failed to load library");
     let product = library
@@ -75,6 +76,7 @@ pub(crate) async fn install(
                     build_manifest.as_bytes(),
                     build_manifest_chunks.as_bytes(),
                     &install_path,
+                    max_download_workers,
                 )
                 .await
                 .expect("Failed to build from manifest");
@@ -110,6 +112,7 @@ async fn build_from_manifest(
     build_manifest_bytes: &[u8],
     build_manifest_chunks_bytes: &[u8],
     install_path: &OsPath,
+    max_download_workers: usize,
 ) -> tokio::io::Result<bool> {
     let mut thread_handlers: Vec<JoinHandle<bool>> = vec![];
     let mut write_queue = queue![];
@@ -145,7 +148,6 @@ async fn build_from_manifest(
     }
     drop(file_chunk_num_map);
 
-    let max_threads = 1024; // TODO: Make variable
     let (tx, rx) =
         crossbeam_channel::unbounded::<(BuildManifestChunksRecord, Bytes, OwnedSemaphorePermit)>();
 
@@ -222,7 +224,7 @@ async fn build_from_manifest(
     });
 
     println!("Downloading chunks...");
-    let semaphore = Arc::new(Semaphore::new(max_threads));
+    let semaphore = Arc::new(Semaphore::new(max_download_workers));
     while let Ok(record) = chunk_queue.remove() {
         let client = client.clone();
         let product = product.clone();

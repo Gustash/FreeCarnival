@@ -1,5 +1,7 @@
 use clap::{Parser, Subcommand};
 
+use crate::constants::DEFAULT_MAX_DL_WORKERS;
+
 /// Native cross-platform indieGala client
 #[derive(Parser, Debug)]
 #[command(
@@ -29,5 +31,12 @@ pub(crate) enum Commands {
     /// List your library
     Library,
     /// Install a game from your library
-    Install { slug: String }, // TODO: Install specific version
+    Install {
+        slug: String,
+        /// How many download workers to run at one time.
+        /// Increasing this value will make downloads faster, but use more memory.
+        /// Lowering this value will lower memory usage at the cost of slower downloads.
+        #[arg(long, default_value_t = *DEFAULT_MAX_DL_WORKERS)]
+        max_download_workers: usize,
+    }, // TODO: Install specific version
 }

@@ -57,8 +57,11 @@ async fn main() {
                 println!("{}", product);
             }
         }
-        Commands::Install { slug } => {
-            match utils::install(gala_req.client, &slug).await {
+        Commands::Install {
+            slug,
+            max_download_workers,
+        } => {
+            match utils::install(gala_req.client, &slug, max_download_workers).await {
                 Ok(true) => {
                     println!("Successfully installed {}", &slug);
                 }
