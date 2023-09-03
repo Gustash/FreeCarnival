@@ -17,11 +17,11 @@ pub(crate) struct SyncResult {
 pub(crate) struct UserInfo {
     status: String,
     user_found: String,
-    #[serde(alias = "._indiegala_user_email")]
+    #[serde(alias = "_indiegala_user_email")]
     email: Option<String>,
-    #[serde(alias = "._indiegala_username")]
+    #[serde(alias = "_indiegala_username")]
     username: Option<String>,
-    #[serde(alias = "._indiegala_user_id")]
+    #[serde(alias = "_indiegala_user_id")]
     user_id: Option<u64>,
 }
 

@@ -9,7 +9,9 @@ edition = "2021"
 base16ct = { version = "0.2.0", features = ["alloc"] }
 bytes = "1.4.0"
 clap = { version = "4.3.21", features = ["derive"] }
-confy = "0.5.1"
+confy = { version = "0.5.1", features = [
+	"yaml_conf",
+], default_features = false }
 cookie = "0.10"
 crossbeam-channel = "0.5.8"
 csv = "1.2.2"
