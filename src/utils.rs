@@ -5,6 +5,7 @@ use directories::ProjectDirs;
 use os_path::OsPath;
 use queues::*;
 use sha2::{Digest, Sha256};
+use similar::{Change, ChangeTag, DiffOp, TextDiff};
 use tokio::{
     fs::File,
     io::AsyncWriteExt,
@@ -19,6 +20,7 @@ use crate::{
         product::{BuildManifestChunksRecord, BuildManifestRecord},
     },
     config::{GalaConfig, InstalledConfig, LibraryConfig},
+    shared::models::InstallInfo,
 };
 
 pub(crate) async fn install<'a>(
@@ -139,6 +141,87 @@ pub(crate) async fn check_updates(
         }
     }
     Ok(available_updates)
+}
+
+// TODO: Allow downgrading
+pub(crate) async fn update(
+    client: &reqwest::Client,
+    library: LibraryConfig,
+    slug: &String,
+    install_info: &InstallInfo,
+) -> tokio::io::Result<bool> {
+    let product = match library.collection.iter().find(|p| &p.slugged_name == slug) {
+        Some(p) => p,
+        None => {
+            println!("Couldn't find {slug} in library");
+            return Ok(false);
+        }
+    };
+    let latest_version = match api::product::get_latest_build_number(client, product).await {
+        Ok(Some(v)) => v,
+        Ok(None) => {
+            println!("Couldn't find the latest version of {slug}");
+            return Ok(false);
+        }
+        Err(err) => {
+            println!("Failed to fetch latest version for {slug}: {:?}", err);
+            return Ok(false);
+        }
+    };
+
+    if install_info.version == latest_version {
+        println!("Build {latest_version} is already installed");
+        return Ok(false);
+    }
+
+    let old_manifest = read_build_manifest(&install_info.version, slug, "manifest").await?;
+    let old_manifest_chunks =
+        read_build_manifest(&install_info.version, slug, "manifest_chunks").await?;
+
+    let new_manifest =
+        match api::product::get_build_manifest(client, &product, &latest_version).await {
+            Ok(m) => m,
+            Err(err) => {
+                println!("Failed to fetch build manifest: {:?}", err);
+                return Ok(false);
+            }
+        };
+    store_build_manifest(&new_manifest, &latest_version, slug, "manifest").await?;
+    let new_manifest_chunks =
+        match api::product::get_build_manifest_chunks(client, &product, &latest_version).await {
+            Ok(m) => m,
+            Err(err) => {
+                println!("Failed to fetch build manifest chunks: {:?}", err);
+                return Ok(false);
+            }
+        };
+    store_build_manifest(
+        &new_manifest_chunks,
+        &latest_version,
+        slug,
+        "manifest_chunks",
+    )
+    .await?;
+
+    let manifest_diff = TextDiff::from_lines(&old_manifest, &new_manifest);
+    for change in manifest_diff.iter_all_changes() {
+        if change.tag() == ChangeTag::Equal {
+            continue;
+        }
+
+        println!("Manifest Change: {:?}", change);
+    }
+
+    let manifest_chunks_diff = TextDiff::from_lines(&old_manifest_chunks, &new_manifest_chunks);
+    for change in manifest_chunks_diff.iter_all_changes() {
+        if change.tag() == ChangeTag::Equal {
+            continue;
+        }
+
+        println!("Chunks Change: {:?}", change);
+    }
+
+    Ok(true)
 }
 
 async fn store_build_manifest(

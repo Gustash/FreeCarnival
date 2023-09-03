@@ -51,6 +51,15 @@ pub(crate) struct Product {
     pub(crate) name: String,
     #[serde(alias = "prod_id_key_name")]
     pub(crate) id_key_name: String,
+    pub(crate) version: Vec<ProductVersion>,
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub(crate) struct ProductVersion {
+    status: u16,
+    enabled: u8,
+    version: String,
+    os: String,
 }
 
 impl std::fmt::Display for Product {

@@ -61,4 +61,6 @@ pub(crate) enum Commands {
     },
     /// Lists available updates for installed games.
     ListUpdates,
+    /// Update an installed game.
+    Update { slug: String },
 }

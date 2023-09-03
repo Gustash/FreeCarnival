@@ -158,6 +158,27 @@ async fn main() {
                 }
             };
         }
+        Commands::Update { slug } => {
+            let installed = InstalledConfig::load().expect("Failed to load installed");
+            let install_info = match installed.get(&slug) {
+                Some(info) => info,
+                None => {
+                    println!("{slug} is not installed.");
+                    return;
+                }
+            };
+            let library = LibraryConfig::load().expect("Failed to load library");
+
+            let gala_req = GalaRequest::new();
+            match utils::update(&gala_req.client, library, &slug, install_info).await {
+                Ok(_) => {
+                    println!("Updated {slug} successfully.");
+                }
+                Err(err) => {
+                    println!("Failed to update {slug}: {:?}", err);
+                }
+            };
+        }
     }
 }
 
