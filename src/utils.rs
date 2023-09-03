@@ -7,7 +7,7 @@ use queues::*;
 use sha2::{Digest, Sha256};
 use tokio::{
     fs::File,
-    io::AsyncWriteExt,
+    io::{AsyncReadExt, AsyncWriteExt},
     sync::{OwnedSemaphorePermit, Semaphore},
     task::JoinHandle,
 };
@@ -36,30 +36,69 @@ pub(crate) async fn install(
         println!("Found game. Fetching latest version build number...");
         return match api::product::get_latest_build_number(&client, &product).await? {
             Some(build_version) => {
-                println!("Fetching build manifest...");
-                let build_manifest =
-                    api::product::get_build_manifest(&client, &product, &build_version).await?;
-                store_build_manifest(
-                    &build_manifest,
+                let mut build_manifest_buf = vec![];
+                match get_local_build_manifest(
                     &build_version,
                     &product.slugged_name,
                     "manifest",
+                    &mut build_manifest_buf,
                 )
                 .await
-                .expect("Failed to save build manifest");
+                {
+                    Ok(_) => {
+                        println!("Found build manifest locally");
+                    }
+                    Err(_) => {
+                        println!("Fetching build manifest...");
+                        let build_manifest =
+                            api::product::get_build_manifest(&client, &product, &build_version)
+                                .await?;
+                        store_build_manifest(
+                            &build_manifest,
+                            &build_version,
+                            &product.slugged_name,
+                            "manifest",
+                        )
+                        .await
+                        .expect("Failed to save build manifest");
 
-                println!("Fetching build manifest chunks...");
-                let build_manifest_chunks =
-                    api::product::get_build_manifest_chunks(&client, &product, &build_version)
-                        .await?;
-                store_build_manifest(
-                    &build_manifest_chunks,
+                        build_manifest_buf.extend_from_slice(build_manifest.as_bytes());
+                    }
+                };
+
+                let mut build_manifest_chunks_buf = vec![];
+                match get_local_build_manifest(
                     &build_version,
                     &product.slugged_name,
                     "manifest_chunks",
+                    &mut build_manifest_chunks_buf,
                 )
                 .await
-                .expect("Failed to save build manifest chunks");
+                {
+                    Ok(_) => {
+                        println!("Found build manifest chunks locally");
+                    }
+                    Err(_) => {
+                        println!("Fetching build manifest chunks...");
+                        let build_manifest_chunks = api::product::get_build_manifest_chunks(
+                            &client,
+                            &product,
+                            &build_version,
+                        )
+                        .await?;
+                        store_build_manifest(
+                            &build_manifest_chunks,
+                            &build_version,
+                            &product.slugged_name,
+                            "manifest_chunks",
+                        )
+                        .await
+                        .expect("Failed to save build manifest chunks");
+
+                        build_manifest_chunks_buf
+                            .extend_from_slice(build_manifest_chunks.as_bytes());
+                    }
+                };
 
                 let install_path = ProjectDirs::from("rs", "", "openGala")
                     .unwrap()
@@ -73,8 +112,8 @@ pub(crate) async fn install(
                 let result = build_from_manifest(
                     client_arc,
                     product_arc,
-                    build_manifest.as_bytes(),
-                    build_manifest_chunks.as_bytes(),
+                    build_manifest_buf,
+                    build_manifest_chunks_buf,
                     &install_path,
                     max_download_workers,
                 )
@@ -89,6 +128,25 @@ pub(crate) async fn install(
 
     println!("Could not find {slug} in library");
     Ok(false)
+}
+
+async fn get_local_build_manifest(
+    build_number: &String,
+    product_slug: &String,
+    file_suffix: &str,
+    out_buf: &mut Vec<u8>,
+) -> tokio::io::Result<usize> {
+    let project = ProjectDirs::from("rs", "", "openGala").unwrap();
+    let path = project
+        .config_dir()
+        .join("manifests")
+        .join(product_slug)
+        .join(format!("{}_{}.csv", build_number, file_suffix));
+
+    tokio::fs::File::open(path)
+        .await?
+        .read_to_end(out_buf)
+        .await
 }
 
 async fn store_build_manifest(
@@ -109,8 +167,8 @@ async fn store_build_manifest(
 async fn build_from_manifest(
     client: Arc<reqwest::Client>,
     product: Arc<Product>,
-    build_manifest_bytes: &[u8],
-    build_manifest_chunks_bytes: &[u8],
+    build_manifest_bytes: Vec<u8>,
+    build_manifest_chunks_bytes: Vec<u8>,
     install_path: &OsPath,
     max_download_workers: usize,
 ) -> tokio::io::Result<bool> {
@@ -124,7 +182,7 @@ async fn build_from_manifest(
     let mut file_chunk_num_map = HashMap::new();
 
     println!("Building folder structure...");
-    let mut manifest_rdr = csv::Reader::from_reader(build_manifest_bytes);
+    let mut manifest_rdr = csv::Reader::from_reader(&build_manifest_bytes[..]);
     for record in manifest_rdr.deserialize::<BuildManifestRecord>() {
         let record = record.expect("Failed to deserialize build manifest");
 
@@ -134,9 +192,10 @@ async fn build_from_manifest(
             file_chunk_num_map.insert(record.file_name.clone(), record.chunks);
         }
     }
+    drop(build_manifest_bytes);
 
     println!("Building queue...");
-    let mut manifest_chunks_rdr = csv::Reader::from_reader(build_manifest_chunks_bytes);
+    let mut manifest_chunks_rdr = csv::Reader::from_reader(&build_manifest_chunks_bytes[..]);
     for record in manifest_chunks_rdr.deserialize::<BuildManifestChunksRecord>() {
         let record = record.expect("Failed to deserialize chunks manifest");
         let is_last = file_chunk_num_map[&record.file_path] - 1 == usize::from(record.id);
@@ -146,6 +205,7 @@ async fn build_from_manifest(
         write_queue.add((record.sha.clone(), is_last)).unwrap();
         chunk_queue.add(record).unwrap();
     }
+    drop(build_manifest_chunks_bytes);
     drop(file_chunk_num_map);
 
     let (tx, rx) =
