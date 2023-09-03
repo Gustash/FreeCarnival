@@ -5,6 +5,7 @@ use api::{auth::SyncResult, GalaRequest};
 use clap::Parser;
 use cli::Commands;
 use config::{CookieConfig, LibraryConfig, UserConfig};
+use constants::DEFAULT_BASE_INSTALL_PATH;
 use prelude::CookieHeaderMap;
 
 mod api;
@@ -59,9 +60,25 @@ async fn main() {
         }
         Commands::Install {
             slug,
+            version,
             max_download_workers,
+            path,
+            base_path,
         } => {
-            match utils::install(gala_req.client, &slug, max_download_workers).await {
+            let install_path = match (path, base_path) {
+                (Some(path), _) => path,
+                (None, Some(base_path)) => base_path.join(&slug),
+                (None, None) => DEFAULT_BASE_INSTALL_PATH.join(&slug),
+            };
+            match utils::install(
+                gala_req.client,
+                &slug,
+                install_path,
+                version,
+                max_download_workers,
+            )
+            .await
+            {
                 Ok(true) => {
                     println!("Successfully installed {}", &slug);
                 }

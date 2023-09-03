@@ -33,7 +33,6 @@ pub(crate) async fn get_latest_build_number(
         .json(&payload)
         .send()
         .await?;
-    println!("Response: {res:#?}");
 
     let body = res.text().await?;
     match serde_json::from_str::<BuildVersionResponse>(&body) {
@@ -83,7 +82,7 @@ pub(crate) async fn get_build_manifest(
     client: &reqwest::Client,
     product: &Product,
     build_version: &String,
-) -> Result<String, reqwest::Error> {
+) -> Result<Bytes, reqwest::Error> {
     let res = client
         .get(format!(
             "{}/DevShowCaseSourceVolume/dev_fold_{}/{}/{}/{}_manifest.csv",
@@ -95,7 +94,7 @@ pub(crate) async fn get_build_manifest(
         ))
         .send()
         .await?;
-    let body = res.text().await?;
+    let body = res.bytes().await?;
     Ok(body)
 }
 
@@ -103,7 +102,7 @@ pub(crate) async fn get_build_manifest_chunks(
     client: &reqwest::Client,
     product: &Product,
     build_version: &String,
-) -> Result<String, reqwest::Error> {
+) -> Result<Bytes, reqwest::Error> {
     let res = client
         .get(format!(
             "{}/DevShowCaseSourceVolume/dev_fold_{}/{}/{}/{}_manifest_chunks.csv",
@@ -115,7 +114,7 @@ pub(crate) async fn get_build_manifest_chunks(
         ))
         .send()
         .await?;
-    let body = res.text().await?;
+    let body = res.bytes().await?;
     Ok(body)
 }
 

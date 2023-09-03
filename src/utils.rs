@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 
 use bytes::Bytes;
 use directories::ProjectDirs;
@@ -7,7 +7,7 @@ use queues::*;
 use sha2::{Digest, Sha256};
 use tokio::{
     fs::File,
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::AsyncWriteExt,
     sync::{OwnedSemaphorePermit, Semaphore},
     task::JoinHandle,
 };
@@ -24,133 +24,84 @@ use crate::{
 pub(crate) async fn install(
     client: reqwest::Client,
     slug: &String,
+    install_path: PathBuf,
+    version: Option<String>,
     max_download_workers: usize,
 ) -> Result<bool, reqwest::Error> {
     let library = LibraryConfig::load().expect("Failed to load library");
-    let product = library
+    let product = match library
         .collection
         .iter()
-        .find(|p| p.slugged_name == slug.to_owned());
+        .find(|p| p.slugged_name == slug.to_owned())
+    {
+        Some(product) => product,
+        None => {
+            println!("Could not find {slug} in library");
+            return Ok(false);
+        }
+    };
 
-    if let Some(product) = product {
-        println!("Found game. Fetching latest version build number...");
-        return match api::product::get_latest_build_number(&client, &product).await? {
-            Some(build_version) => {
-                let mut build_manifest_buf = vec![];
-                match get_local_build_manifest(
-                    &build_version,
-                    &product.slugged_name,
-                    "manifest",
-                    &mut build_manifest_buf,
-                )
-                .await
-                {
-                    Ok(_) => {
-                        println!("Found build manifest locally");
-                    }
-                    Err(_) => {
-                        println!("Fetching build manifest...");
-                        let build_manifest =
-                            api::product::get_build_manifest(&client, &product, &build_version)
-                                .await?;
-                        store_build_manifest(
-                            &build_manifest,
-                            &build_version,
-                            &product.slugged_name,
-                            "manifest",
-                        )
-                        .await
-                        .expect("Failed to save build manifest");
-
-                        build_manifest_buf.extend_from_slice(build_manifest.as_bytes());
-                    }
-                };
-
-                let mut build_manifest_chunks_buf = vec![];
-                match get_local_build_manifest(
-                    &build_version,
-                    &product.slugged_name,
-                    "manifest_chunks",
-                    &mut build_manifest_chunks_buf,
-                )
-                .await
-                {
-                    Ok(_) => {
-                        println!("Found build manifest chunks locally");
-                    }
-                    Err(_) => {
-                        println!("Fetching build manifest chunks...");
-                        let build_manifest_chunks = api::product::get_build_manifest_chunks(
-                            &client,
-                            &product,
-                            &build_version,
-                        )
-                        .await?;
-                        store_build_manifest(
-                            &build_manifest_chunks,
-                            &build_version,
-                            &product.slugged_name,
-                            "manifest_chunks",
-                        )
-                        .await
-                        .expect("Failed to save build manifest chunks");
-
-                        build_manifest_chunks_buf
-                            .extend_from_slice(build_manifest_chunks.as_bytes());
-                    }
-                };
-
-                let install_path = ProjectDirs::from("rs", "", "openGala")
-                    .unwrap()
-                    .data_dir()
-                    .join(&product.slugged_name);
-                let install_path = OsPath::from(install_path);
-                let client_arc = Arc::new(client);
-                let product_arc = Arc::new(product.clone());
-
-                println!("Installing game from manifest...");
-                let result = build_from_manifest(
-                    client_arc,
-                    product_arc,
-                    build_manifest_buf,
-                    build_manifest_chunks_buf,
-                    &install_path,
-                    max_download_workers,
-                )
-                .await
-                .expect("Failed to build from manifest");
-
-                Ok(result)
+    println!(
+        "Found game. {}",
+        match &version {
+            Some(version) => format!("Installing build version {}...", version),
+            None => String::from("Fetching latest version build number..."),
+        }
+    );
+    let build_version = match version {
+        Some(selected) => selected,
+        None => match api::product::get_latest_build_number(&client, &product).await? {
+            Some(version) => version,
+            None => {
+                println!("Failed to fetch latest build number. Cannot install.");
+                return Ok(false);
             }
-            None => Ok(false),
-        };
-    }
+        },
+    };
+    println!("Fetching build manifest...");
+    let build_manifest =
+        api::product::get_build_manifest(&client, &product, &build_version).await?;
+    store_build_manifest(
+        &build_manifest,
+        &build_version,
+        &product.slugged_name,
+        "manifest",
+    )
+    .await
+    .expect("Failed to save build manifest");
 
-    println!("Could not find {slug} in library");
-    Ok(false)
-}
+    println!("Fetching build manifest chunks...");
+    let build_manifest_chunks =
+        api::product::get_build_manifest_chunks(&client, &product, &build_version).await?;
+    store_build_manifest(
+        &build_manifest_chunks,
+        &build_version,
+        &product.slugged_name,
+        "manifest_chunks",
+    )
+    .await
+    .expect("Failed to save build manifest chunks");
 
-async fn get_local_build_manifest(
-    build_number: &String,
-    product_slug: &String,
-    file_suffix: &str,
-    out_buf: &mut Vec<u8>,
-) -> tokio::io::Result<usize> {
-    let project = ProjectDirs::from("rs", "", "openGala").unwrap();
-    let path = project
-        .config_dir()
-        .join("manifests")
-        .join(product_slug)
-        .join(format!("{}_{}.csv", build_number, file_suffix));
+    let client_arc = Arc::new(client);
+    let product_arc = Arc::new(product.clone());
 
-    tokio::fs::File::open(path)
-        .await?
-        .read_to_end(out_buf)
-        .await
+    println!("Installing game from manifest...");
+    let result = build_from_manifest(
+        client_arc,
+        product_arc,
+        build_manifest,
+        build_manifest_chunks,
+        install_path.into(),
+        max_download_workers,
+    )
+    .await
+    .expect("Failed to build from manifest");
+
+    Ok(result)
 }
 
 async fn store_build_manifest(
-    body: &String,
+    body: &Bytes,
     build_number: &String,
     product_slug: &String,
     file_suffix: &str,
@@ -161,15 +112,15 @@ async fn store_build_manifest(
     tokio::fs::create_dir_all(&path).await?;
 
     let path = path.join(format!("{}_{}.csv", build_number, file_suffix));
-    tokio::fs::write(path, body.as_bytes()).await
+    tokio::fs::write(path, body).await
 }
 
 async fn build_from_manifest(
     client: Arc<reqwest::Client>,
     product: Arc<Product>,
-    build_manifest_bytes: Vec<u8>,
-    build_manifest_chunks_bytes: Vec<u8>,
-    install_path: &OsPath,
+    build_manifest_bytes: Bytes,
+    build_manifest_chunks_bytes: Bytes,
+    install_path: OsPath,
     max_download_workers: usize,
 ) -> tokio::io::Result<bool> {
     let mut thread_handlers: Vec<JoinHandle<bool>> = vec![];
@@ -211,7 +162,6 @@ async fn build_from_manifest(
     let (tx, rx) =
         crossbeam_channel::unbounded::<(BuildManifestChunksRecord, Bytes, OwnedSemaphorePermit)>();
 
-    let install_path = install_path.clone();
     println!("Spawning write thread...");
     let write_handler = tokio::spawn(async move {
         println!("Write thread started.");

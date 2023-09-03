@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use clap::{Parser, Subcommand};
 
 use crate::constants::DEFAULT_MAX_DL_WORKERS;
@@ -38,5 +40,16 @@ pub(crate) enum Commands {
         /// Lowering this value will lower memory usage at the cost of slower downloads.
         #[arg(long, default_value_t = *DEFAULT_MAX_DL_WORKERS)]
         max_download_workers: usize,
-    }, // TODO: Install specific version
+        /// Install specific build version. If ommited, the latest build version will be installed.
+        #[arg(long, short)]
+        version: Option<String>,
+        /// Base install path. The game will be installed in a subdirectory with the game's slugged
+        /// name.
+        #[arg(long)]
+        base_path: Option<PathBuf>,
+        /// Exact install path. The game will be installed in the selected directory without
+        /// creating additional subdirectories.
+        #[arg(long)]
+        path: Option<PathBuf>,
+    },
 }
