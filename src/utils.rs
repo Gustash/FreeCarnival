@@ -1,11 +1,16 @@
-use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+    sync::Arc,
+    time::Duration,
+};
 
 use bytes::Bytes;
 use directories::ProjectDirs;
 use os_path::OsPath;
 use queues::*;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use similar::{Change, ChangeTag, DiffOp, TextDiff};
 use tokio::{
     fs::File,
     io::AsyncWriteExt,
@@ -82,12 +87,11 @@ pub(crate) async fn install<'a>(
     .await
     .expect("Failed to save build manifest chunks");
 
-    let client_arc = Arc::new(client);
     let product_arc = Arc::new(product.clone());
 
     println!("Installing game from manifest...");
     let result = build_from_manifest(
-        client_arc,
+        client,
         product_arc,
         build_manifest.as_bytes(),
         build_manifest_chunks.as_bytes(),
@@ -145,54 +149,53 @@ pub(crate) async fn check_updates(
 
 // TODO: Allow downgrading
 pub(crate) async fn update(
-    client: &reqwest::Client,
+    client: reqwest::Client,
     library: LibraryConfig,
     slug: &String,
     install_info: &InstallInfo,
-) -> tokio::io::Result<bool> {
+    max_download_workers: usize,
+) -> tokio::io::Result<Option<String>> {
     let product = match library.collection.iter().find(|p| &p.slugged_name == slug) {
         Some(p) => p,
         None => {
             println!("Couldn't find {slug} in library");
-            return Ok(false);
+            return Ok(None);
         }
     };
-    let latest_version = match api::product::get_latest_build_number(client, product).await {
+    let latest_version = match api::product::get_latest_build_number(&client, product).await {
         Ok(Some(v)) => v,
         Ok(None) => {
             println!("Couldn't find the latest version of {slug}");
-            return Ok(false);
+            return Ok(None);
         }
         Err(err) => {
             println!("Failed to fetch latest version for {slug}: {:?}", err);
-            return Ok(false);
+            return Ok(None);
         }
     };
 
     if install_info.version == latest_version {
         println!("Build {latest_version} is already installed");
-        return Ok(false);
+        return Ok(None);
     }
 
     let old_manifest = read_build_manifest(&install_info.version, slug, "manifest").await?;
-    let old_manifest_chunks =
-        read_build_manifest(&install_info.version, slug, "manifest_chunks").await?;
 
     let new_manifest =
-        match api::product::get_build_manifest(client, &product, &latest_version).await {
+        match api::product::get_build_manifest(&client, &product, &latest_version).await {
             Ok(m) => m,
             Err(err) => {
                 println!("Failed to fetch build manifest: {:?}", err);
-                return Ok(false);
+                return Ok(None);
             }
         };
     store_build_manifest(&new_manifest, &latest_version, slug, "manifest").await?;
     let new_manifest_chunks =
-        match api::product::get_build_manifest_chunks(client, &product, &latest_version).await {
+        match api::product::get_build_manifest_chunks(&client, &product, &latest_version).await {
             Ok(m) => m,
             Err(err) => {
                 println!("Failed to fetch build manifest chunks: {:?}", err);
-                return Ok(false);
+                return Ok(None);
             }
         };
     store_build_manifest(
@@ -203,25 +206,204 @@ pub(crate) async fn update(
     )
     .await?;
 
-    let manifest_diff = TextDiff::from_lines(&old_manifest, &new_manifest);
-    for change in manifest_diff.iter_all_changes() {
-        if change.tag() == ChangeTag::Equal {
+    let delta_manifest = read_or_generate_delta_manifest(
+        slug,
+        old_manifest.as_bytes(),
+        new_manifest.as_bytes(),
+        &install_info.version,
+        &latest_version,
+    )
+    .await?;
+    let delta_manifest_chunks = read_or_generate_delta_chunks_manifest(
+        slug,
+        delta_manifest.as_bytes(),
+        new_manifest_chunks.as_bytes(),
+        &install_info.version,
+        &latest_version,
+    )
+    .await?;
+
+    let product_arc = Arc::new(product.clone());
+    build_from_manifest(
+        client,
+        product_arc,
+        delta_manifest.as_bytes(),
+        delta_manifest_chunks.as_bytes(),
+        OsPath::from(&install_info.install_path),
+        max_download_workers,
+    )
+    .await?;
+
+    Ok(Some(latest_version))
+}
+
+#[derive(PartialEq, Clone, Debug, Serialize, Deserialize)]
+pub(crate) enum ChangeTag {
+    Added,
+    Modified,
+    Removed,
+}
+
+async fn read_or_generate_delta_manifest(
+    slug: &String,
+    old_manifest_bytes: &[u8],
+    new_manifest_bytes: &[u8],
+    old_version: &String,
+    new_version: &String,
+) -> tokio::io::Result<String> {
+    let manifest_delta_version = format!("{}_{}", old_version, new_version);
+    if let Ok(exising_delta) =
+        read_build_manifest(&manifest_delta_version, slug, "manifest_delta").await
+    {
+        println!("Using existing delta manifest");
+        return Ok(exising_delta);
+    }
+
+    println!("Generating delta manifest...");
+    let mut new_manifest_rdr = csv::Reader::from_reader(new_manifest_bytes);
+    let new_manifest_iter: Vec<BuildManifestRecord> = new_manifest_rdr
+        .deserialize::<BuildManifestRecord>()
+        .into_iter()
+        .map(|r| r.expect("Failed to deserialize updated build manifest"))
+        .collect();
+    let mut old_manifest_rdr = csv::Reader::from_reader(old_manifest_bytes);
+    let old_manifest_hash: Vec<BuildManifestRecord> = old_manifest_rdr
+        .deserialize::<BuildManifestRecord>()
+        .into_iter()
+        .map(|r| r.expect("Failed to deserialize old build manifest"))
+        .collect();
+
+    let new_file_names: HashSet<&String> = new_manifest_iter
+        .iter()
+        .map(|entry| &entry.file_name)
+        .collect();
+    let mut build_manifest_delta_wtr = csv::Writer::from_writer(vec![]);
+
+    for new_entry in &new_manifest_iter {
+        if !old_manifest_hash
+            .iter()
+            .any(|entry| entry.file_name == new_entry.file_name)
+        {
+            println!("{} was added", new_entry.file_name);
+            build_manifest_delta_wtr
+                .serialize(BuildManifestRecord {
+                    tag: Some(ChangeTag::Added),
+                    ..new_entry.clone()
+                })
+                .expect("Failed to serialize delta build manifest");
+        }
+    }
+
+    for old_entry in old_manifest_hash {
+        if let Some(new_entry) = new_manifest_iter
+            .iter()
+            .find(|entry| entry.file_name == old_entry.file_name)
+        {
+            if old_entry.sha != new_entry.sha {
+                println!("{} was modified", old_entry.file_name);
+                build_manifest_delta_wtr
+                    .serialize(BuildManifestRecord {
+                        tag: Some(ChangeTag::Modified),
+                        ..new_entry.clone()
+                    })
+                    .expect("Failed to serialize delta build manifest");
+            }
             continue;
         }
 
-        println!("Manifest Change: {:?}", change);
+        if !new_file_names.contains(&old_entry.file_name) {
+            println!("{} was deleted", old_entry.file_name);
+            build_manifest_delta_wtr
+                .serialize(BuildManifestRecord {
+                    tag: Some(ChangeTag::Removed),
+                    ..old_entry
+                })
+                .expect("Failed to serialize delta build manifest");
+        }
+    }
+    let delta_str = String::from_utf8(build_manifest_delta_wtr.into_inner().unwrap()).unwrap();
+    store_build_manifest(
+        &delta_str,
+        &format!("{}_{}", old_version, new_version),
+        slug,
+        "manifest_delta",
+    )
+    .await?;
+
+    Ok(delta_str)
+}
+
+async fn read_or_generate_delta_chunks_manifest(
+    slug: &String,
+    delta_manifest_bytes: &[u8],
+    new_manifest_bytes: &[u8],
+    old_version: &String,
+    new_version: &String,
+) -> tokio::io::Result<String> {
+    let manifest_delta_version = format!("{}_{}", old_version, new_version);
+    if let Ok(exising_delta) =
+        read_build_manifest(&manifest_delta_version, slug, "manifest_delta_chunks").await
+    {
+        println!("Using existing chunks delta manifest");
+        return Ok(exising_delta);
     }
 
-    let manifest_chunks_diff = TextDiff::from_lines(&old_manifest_chunks, &new_manifest_chunks);
-    for change in manifest_chunks_diff.iter_all_changes() {
-        if change.tag() == ChangeTag::Equal {
+    println!("Generating chunks delta manifest...");
+    let mut delta_manifest_rdr = csv::Reader::from_reader(delta_manifest_bytes);
+    let mut delta_manifest = delta_manifest_rdr.deserialize::<BuildManifestRecord>();
+    let mut current_file = delta_manifest
+        .next()
+        .expect("Failed to deserialize build manifest delta")
+        .expect("There were no changes in this update?");
+
+    let mut new_manifest_rdr = csv::Reader::from_reader(new_manifest_bytes);
+    let mut build_manifest_delta_wtr = csv::Writer::from_writer(vec![]);
+
+    for record in new_manifest_rdr.deserialize::<BuildManifestChunksRecord>() {
+        let record = record.expect("Failed to deserialize build manifest chunks");
+
+        // We want to ignore chunks for removed files
+        while current_file.tag == Some(ChangeTag::Removed) {
+            current_file = match delta_manifest.next() {
+                Some(file) => file.expect("Failed to deserialize build manifest delta"),
+                None => {
+                    println!("Done processing delta chunks");
+                    break;
+                }
+            };
+        }
+
+        if record.file_path != current_file.file_name {
             continue;
         }
 
-        println!("Chunks Change: {:?}", change);
+        build_manifest_delta_wtr
+            .serialize(&record)
+            .expect("Failed to serialize build manifest chunks");
+
+        if usize::from(record.id) + 1 == current_file.chunks {
+            println!("Done processing chunks for {}", &record.file_path);
+            // Move on to the next file
+            current_file = match delta_manifest.next() {
+                Some(file) => file.expect("Failed to deserialize build manifest delta"),
+                None => {
+                    println!("Done processing delta chunks");
+                    break;
+                }
+            };
+        }
     }
 
-    Ok(true)
+    let delta_str = String::from_utf8(build_manifest_delta_wtr.into_inner().unwrap()).unwrap();
+    store_build_manifest(
+        &delta_str,
+        &format!("{}_{}", old_version, new_version),
+        slug,
+        "manifest_delta_chunks",
+    )
+    .await?;
+
+    Ok(delta_str)
 }
 
 async fn store_build_manifest(
@@ -255,7 +437,7 @@ async fn read_build_manifest(
 }
 
 async fn build_from_manifest(
-    client: Arc<reqwest::Client>,
+    client: reqwest::Client,
     product: Arc<Product>,
     build_manifest_bytes: &[u8],
     build_manifest_chunks_bytes: &[u8],
@@ -275,6 +457,27 @@ async fn build_from_manifest(
     let mut manifest_rdr = csv::Reader::from_reader(build_manifest_bytes);
     for record in manifest_rdr.deserialize::<BuildManifestRecord>() {
         let record = record.expect("Failed to deserialize build manifest");
+
+        if record.tag == Some(ChangeTag::Modified) || record.tag == Some(ChangeTag::Removed) {
+            let file_path = install_path.join(&record.file_name);
+            if record.flags == 40 {
+                // Is a directory
+                if file_path.exists() && file_path.is_dir() {
+                    // Delete this directory
+                    tokio::fs::remove_dir_all(file_path).await?;
+                }
+                continue;
+            }
+
+            if file_path.exists() && file_path.is_file() {
+                // Delete this file
+                tokio::fs::remove_file(file_path).await?;
+            }
+
+            if record.tag == Some(ChangeTag::Removed) {
+                continue;
+            }
+        }
 
         prepare_file_folder(&install_path, &record.file_name, record.flags).await?;
 
@@ -304,8 +507,11 @@ async fn build_from_manifest(
         println!("Write thread started.");
         let mut in_buffer = HashMap::new();
         let mut file_map = HashMap::new();
+        // TODO: Move to argument
+        let max_chunks_in_memory = 1024 * 1024; // 1 GiB
+        let mut permit_queue = Vec::with_capacity(max_chunks_in_memory);
+
         while write_queue.size() > 0 {
-            println!("Waiting to receive chunk...");
             let (record, chunk, permit) = match rx.recv_timeout(Duration::from_secs(1)) {
                 Ok(msg) => msg,
                 Err(_) => {
@@ -317,17 +523,23 @@ async fn build_from_manifest(
                 }
             };
 
-            println!("Received data from download thread.");
-            in_buffer.insert(
-                record.sha.clone(),
-                (record.file_path.clone(), chunk, permit),
-            );
+            let available_chunks =
+                max_chunks_in_memory - std::cmp::min(in_buffer.len(), max_chunks_in_memory);
+            if available_chunks >= max_download_workers {
+                // We still have space in memory for more chunks, let another download task
+                // continue
+                drop(permit);
+            } else {
+                // Memory bank is full of chunks, yummy! Hold on until more chunks are flushed to
+                // disk before spawning new download tasks so we don't get a memory stomach ache
+                permit_queue.push(permit);
+            }
+            in_buffer.insert(record.sha.clone(), (record.file_path.clone(), chunk));
 
             loop {
-                println!("Entering loop to process chunks.");
                 match write_queue.peek() {
                     Ok((next_chunk, is_last_chunk)) => {
-                        if let Some((file_path, bytes, permit)) = in_buffer.remove(&next_chunk) {
+                        if let Some((file_path, bytes)) = in_buffer.remove(&next_chunk) {
                             if !file_map.contains_key(&file_path) {
                                 let chunk_file_path = install_path.join(&file_path);
                                 let file = open_file(&chunk_file_path)
@@ -346,7 +558,10 @@ async fn build_from_manifest(
                             if is_last_chunk {
                                 file_map.remove(&file_path);
                             }
-                            drop(permit);
+
+                            // Let another download task go since we have flushed this chunk to
+                            // disk
+                            permit_queue.pop();
 
                             continue;
                         }
@@ -357,7 +572,6 @@ async fn build_from_manifest(
                             in_buffer.len()
                         );
 
-                        println!("Exiting loop to process chunks.");
                         break;
                     }
                     Err(_) => {

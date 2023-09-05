@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
-use crate::constants::CONTENT_URL;
+use crate::{constants::CONTENT_URL, utils::ChangeTag};
 
 use super::auth::Product;
 
@@ -54,7 +54,7 @@ pub(crate) async fn get_latest_build_number(
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub(crate) struct BuildManifestRecord {
     #[serde(rename = "Size in Bytes")]
     pub(crate) size_in_bytes: usize,
@@ -66,6 +66,8 @@ pub(crate) struct BuildManifestRecord {
     pub(crate) flags: u8,
     #[serde(rename = "File Name")]
     pub(crate) file_name: String,
+    #[serde(rename = "Change Tag")]
+    pub(crate) tag: Option<ChangeTag>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

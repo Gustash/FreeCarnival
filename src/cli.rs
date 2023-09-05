@@ -38,6 +38,9 @@ pub(crate) enum Commands {
         /// How many download workers to run at one time.
         /// Increasing this value will make downloads faster, but use more memory.
         /// Lowering this value will lower memory usage at the cost of slower downloads.
+        ///
+        /// Note: Too many download workers can cause unreliable downloads. The default is
+        /// double your CPU_COUNT. You shouldn't deviate too much from this.
         #[arg(long, default_value_t = *DEFAULT_MAX_DL_WORKERS)]
         max_download_workers: usize,
         /// Install specific build version. If ommited, the latest build version will be installed.
@@ -62,5 +65,16 @@ pub(crate) enum Commands {
     /// Lists available updates for installed games.
     ListUpdates,
     /// Update an installed game.
-    Update { slug: String },
+    Update {
+        slug: String,
+        /// How many download workers to run at one time.
+        /// Increasing this value will make downloads faster, but use more memory.
+        /// Lowering this value will lower memory usage at the cost of slower downloads.
+        ///
+        /// Note: Too many download workers can cause unreliable downloads. The default is
+        /// double your CPU_COUNT, or 16, whichever is lowest. You shouldn't deviate too much from
+        /// this.
+        #[arg(long, default_value_t = *DEFAULT_MAX_DL_WORKERS)]
+        max_download_workers: usize,
+    },
 }

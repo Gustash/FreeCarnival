@@ -158,9 +158,12 @@ async fn main() {
                 }
             };
         }
-        Commands::Update { slug } => {
-            let installed = InstalledConfig::load().expect("Failed to load installed");
-            let install_info = match installed.get(&slug) {
+        Commands::Update {
+            slug,
+            max_download_workers,
+        } => {
+            let mut installed = InstalledConfig::load().expect("Failed to load installed");
+            let install_info = match installed.remove(&slug) {
                 Some(info) => info,
                 None => {
                     println!("{slug} is not installed.");
@@ -170,9 +173,27 @@ async fn main() {
             let library = LibraryConfig::load().expect("Failed to load library");
 
             let gala_req = GalaRequest::new();
-            match utils::update(&gala_req.client, library, &slug, install_info).await {
-                Ok(_) => {
+            match utils::update(
+                gala_req.client,
+                library,
+                &slug,
+                &install_info,
+                max_download_workers,
+            )
+            .await
+            {
+                Ok(Some(installed_version)) => {
                     println!("Updated {slug} successfully.");
+                    installed.insert(
+                        slug,
+                        InstallInfo::new(install_info.install_path, installed_version),
+                    );
+                    installed
+                        .store()
+                        .expect("Failed to update installed config");
+                }
+                Ok(None) => {
+                    println!("Failed to update {slug}");
                 }
                 Err(err) => {
                     println!("Failed to update {slug}: {:?}", err);
