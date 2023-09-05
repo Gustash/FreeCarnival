@@ -6,6 +6,6 @@
 
 - [x] Authentication
 - [x] Installing games
-- [ ] Updating games
+- [x] Updating games
 - [x] Uninstalling games
 - [ ] Launching games
