@@ -495,7 +495,9 @@ async fn build_from_manifest(
         if is_last {
             file_chunk_num_map.remove(&record.file_path);
         }
-        write_queue.add((record.sha.clone(), is_last)).unwrap();
+        write_queue
+            .add((record.sha.clone(), record.id, is_last))
+            .unwrap();
         chunk_queue.add(record).unwrap();
     }
     drop(file_chunk_num_map);
@@ -534,12 +536,18 @@ async fn build_from_manifest(
                 // disk before spawning new download tasks so we don't get a memory stomach ache
                 permit_queue.push(permit);
             }
-            in_buffer.insert(record.sha.clone(), (record.file_path.clone(), chunk));
+            in_buffer.insert(
+                // Some files don't have the chunk id in the sha parts, so they can have reused
+                // SHAs for chunks (e.g. DieYoungPrologue-WindowsNoEditor.pak)
+                format!("{},{}", record.id, record.sha),
+                (record.file_path.clone(), chunk),
+            );
 
             loop {
                 match write_queue.peek() {
-                    Ok((next_chunk, is_last_chunk)) => {
-                        if let Some((file_path, bytes)) = in_buffer.remove(&next_chunk) {
+                    Ok((next_chunk, chunk_id, is_last_chunk)) => {
+                        let next_chunk_key = format!("{},{}", chunk_id, next_chunk);
+                        if let Some((file_path, bytes)) = in_buffer.remove(&next_chunk_key) {
                             if !file_map.contains_key(&file_path) {
                                 let chunk_file_path = install_path.join(&file_path);
                                 let file = open_file(&chunk_file_path)
@@ -598,16 +606,23 @@ async fn build_from_manifest(
                 .await
                 .expect(&format!("Failed to download {}.bin", &record.sha));
 
-            let chunk_sha = &record.sha.split("_").collect::<Vec<&str>>()[2];
-            println!("Verifying {}", record.sha);
-            let chunk_corrupted = !verify_chunk(&chunk, chunk_sha);
+            let chunk_parts = &record.sha.split("_").collect::<Vec<&str>>();
+            match chunk_parts.last() {
+                Some(chunk_sha) => {
+                    println!("Verifying {}", record.sha);
+                    let chunk_corrupted = !verify_chunk(&chunk, chunk_sha);
 
-            if chunk_corrupted {
-                println!(
-                    "{} failed verification. {} is corrupted.",
-                    &record.sha, &record.file_path
-                );
-                return false;
+                    if chunk_corrupted {
+                        println!(
+                            "{} failed verification. {} is corrupted.",
+                            &record.sha, &record.file_path
+                        );
+                        return false;
+                    }
+                }
+                None => {
+                    println!("Couldn't find Chunk SHA. Skipping verification...");
+                }
             }
 
             println!(
