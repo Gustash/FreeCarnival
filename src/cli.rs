@@ -69,7 +69,7 @@ pub(crate) enum Commands {
     },
     /// Lists available updates for installed games.
     ListUpdates,
-    /// Update an installed game.
+    /// Update (or downgrade) an installed game.
     Update {
         slug: String,
         /// How many download workers to run at one time.
@@ -86,5 +86,9 @@ pub(crate) enum Commands {
         /// use more memory if needed, but can potentially speed up downloads.
         #[arg(long, default_value_t = *DEFAULT_MAX_MEMORY_USAGE)]
         max_memory_usage: usize,
+        /// Change to a specific version. Don't set this if you just want to update to the latest
+        /// version
+        #[arg(long, short)]
+        version: Option<String>,
     },
 }

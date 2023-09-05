@@ -162,6 +162,7 @@ async fn main() {
         }
         Commands::Update {
             slug,
+            version,
             max_download_workers,
             max_memory_usage,
         } => {
@@ -181,6 +182,7 @@ async fn main() {
                 library,
                 &slug,
                 &install_info,
+                version,
                 max_download_workers,
                 max_memory_usage,
             )

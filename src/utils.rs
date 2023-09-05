@@ -155,6 +155,7 @@ pub(crate) async fn update(
     library: LibraryConfig,
     slug: &String,
     install_info: &InstallInfo,
+    selected_version: Option<String>,
     max_download_workers: usize,
     max_memory_usage: usize,
 ) -> tokio::io::Result<Option<String>> {
@@ -165,56 +166,52 @@ pub(crate) async fn update(
             return Ok(None);
         }
     };
-    let latest_version = match api::product::get_latest_build_number(&client, product).await {
-        Ok(Some(v)) => v,
-        Ok(None) => {
-            println!("Couldn't find the latest version of {slug}");
-            return Ok(None);
-        }
-        Err(err) => {
-            println!("Failed to fetch latest version for {slug}: {:?}", err);
-            return Ok(None);
-        }
+    let version = match selected_version {
+        Some(v) => v,
+        None => match api::product::get_latest_build_number(&client, product).await {
+            Ok(Some(v)) => v,
+            Ok(None) => {
+                println!("Couldn't find the latest version of {slug}");
+                return Ok(None);
+            }
+            Err(err) => {
+                println!("Failed to fetch latest version for {slug}: {:?}", err);
+                return Ok(None);
+            }
+        },
     };
 
-    if install_info.version == latest_version {
-        println!("Build {latest_version} is already installed");
+    if install_info.version == version {
+        println!("Build {version} is already installed");
         return Ok(None);
     }
 
     let old_manifest = read_build_manifest(&install_info.version, slug, "manifest").await?;
 
-    let new_manifest =
-        match api::product::get_build_manifest(&client, &product, &latest_version).await {
-            Ok(m) => m,
-            Err(err) => {
-                println!("Failed to fetch build manifest: {:?}", err);
-                return Ok(None);
-            }
-        };
-    store_build_manifest(&new_manifest, &latest_version, slug, "manifest").await?;
+    let new_manifest = match api::product::get_build_manifest(&client, &product, &version).await {
+        Ok(m) => m,
+        Err(err) => {
+            println!("Failed to fetch build manifest: {:?}", err);
+            return Ok(None);
+        }
+    };
+    store_build_manifest(&new_manifest, &version, slug, "manifest").await?;
     let new_manifest_chunks =
-        match api::product::get_build_manifest_chunks(&client, &product, &latest_version).await {
+        match api::product::get_build_manifest_chunks(&client, &product, &version).await {
             Ok(m) => m,
             Err(err) => {
                 println!("Failed to fetch build manifest chunks: {:?}", err);
                 return Ok(None);
             }
         };
-    store_build_manifest(
-        &new_manifest_chunks,
-        &latest_version,
-        slug,
-        "manifest_chunks",
-    )
-    .await?;
+    store_build_manifest(&new_manifest_chunks, &version, slug, "manifest_chunks").await?;
 
     let delta_manifest = read_or_generate_delta_manifest(
         slug,
         old_manifest.as_bytes(),
         new_manifest.as_bytes(),
         &install_info.version,
-        &latest_version,
+        &version,
     )
     .await?;
     let delta_manifest_chunks = read_or_generate_delta_chunks_manifest(
@@ -222,7 +219,7 @@ pub(crate) async fn update(
         delta_manifest.as_bytes(),
         new_manifest_chunks.as_bytes(),
         &install_info.version,
-        &latest_version,
+        &version,
     )
     .await?;
 
@@ -238,7 +235,7 @@ pub(crate) async fn update(
     )
     .await?;
 
-    Ok(Some(latest_version))
+    Ok(Some(version))
 }
 
 #[derive(PartialEq, Clone, Debug, Serialize, Deserialize)]
