@@ -15,7 +15,6 @@ use tokio::{
     fs::File,
     io::AsyncWriteExt,
     sync::{OwnedSemaphorePermit, Semaphore},
-    task::JoinHandle,
 };
 
 use crate::{
@@ -25,6 +24,7 @@ use crate::{
         product::{BuildManifestChunksRecord, BuildManifestRecord},
     },
     config::{GalaConfig, InstalledConfig, LibraryConfig},
+    constants::MAX_CHUNK_SIZE,
     shared::models::InstallInfo,
 };
 
@@ -34,6 +34,7 @@ pub(crate) async fn install<'a>(
     install_path: &PathBuf,
     version: Option<String>,
     max_download_workers: usize,
+    max_memory_usage: usize,
 ) -> Result<Result<String, &'a str>, reqwest::Error> {
     let library = LibraryConfig::load().expect("Failed to load library");
     let product = match library
@@ -97,6 +98,7 @@ pub(crate) async fn install<'a>(
         build_manifest_chunks.as_bytes(),
         install_path.into(),
         max_download_workers,
+        max_memory_usage,
     )
     .await
     .expect("Failed to build from manifest");
@@ -154,6 +156,7 @@ pub(crate) async fn update(
     slug: &String,
     install_info: &InstallInfo,
     max_download_workers: usize,
+    max_memory_usage: usize,
 ) -> tokio::io::Result<Option<String>> {
     let product = match library.collection.iter().find(|p| &p.slugged_name == slug) {
         Some(p) => p,
@@ -231,6 +234,7 @@ pub(crate) async fn update(
         delta_manifest_chunks.as_bytes(),
         OsPath::from(&install_info.install_path),
         max_download_workers,
+        max_memory_usage,
     )
     .await?;
 
@@ -443,8 +447,8 @@ async fn build_from_manifest(
     build_manifest_chunks_bytes: &[u8],
     install_path: OsPath,
     max_download_workers: usize,
+    max_memory_usage: usize,
 ) -> tokio::io::Result<bool> {
-    let mut thread_handlers: Vec<JoinHandle<bool>> = vec![];
     let mut write_queue = queue![];
     let mut chunk_queue = queue![];
 
@@ -507,8 +511,7 @@ async fn build_from_manifest(
         println!("Write thread started.");
         let mut in_buffer = HashMap::new();
         let mut file_map = HashMap::new();
-        // TODO: Move to argument
-        let max_chunks_in_memory = 1024 * 1024; // 1 GiB
+        let max_chunks_in_memory = max_memory_usage / *MAX_CHUNK_SIZE;
         let mut permit_queue = Vec::with_capacity(max_chunks_in_memory);
 
         while write_queue.size() > 0 {
@@ -592,7 +595,7 @@ async fn build_from_manifest(
         let thread_tx = tx.clone();
         let permit = semaphore.clone().acquire_owned().await.unwrap();
 
-        thread_handlers.push(tokio::spawn(async move {
+        tokio::spawn(async move {
             println!("Downloading {}", record.sha);
             let chunk = api::product::download_chunk(&client, &product, &record.sha)
                 .await
@@ -622,20 +625,14 @@ async fn build_from_manifest(
             thread_tx.send((record, chunk, permit)).unwrap();
 
             true
-        }));
+        });
     }
 
-    println!("Waiting for download threads to finish...");
-    let mut result = true;
-    for handler in thread_handlers {
-        if !handler.await? {
-            result = false;
-        };
-    }
     println!("Waiting for write thread to finish...");
     write_handler.await?;
 
-    Ok(result)
+    // TODO: Redo logic for verification
+    Ok(true)
 }
 
 async fn open_file(file_path: &OsPath) -> tokio::io::Result<File> {

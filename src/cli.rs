@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
-use crate::constants::DEFAULT_MAX_DL_WORKERS;
+use crate::constants::{DEFAULT_MAX_DL_WORKERS, DEFAULT_MAX_MEMORY_USAGE};
 
 /// Native cross-platform indieGala client
 #[derive(Parser, Debug)]
@@ -43,6 +43,11 @@ pub(crate) enum Commands {
         /// double your CPU_COUNT. You shouldn't deviate too much from this.
         #[arg(long, default_value_t = *DEFAULT_MAX_DL_WORKERS)]
         max_download_workers: usize,
+        /// How much memory to use to store chunks. Lowering this value will potentially make
+        /// downloads slower while being lighter on memory usage. Raising it will make the program
+        /// use more memory if needed, but can potentially speed up downloads.
+        #[arg(long, default_value_t = *DEFAULT_MAX_MEMORY_USAGE)]
+        max_memory_usage: usize,
         /// Install specific build version. If ommited, the latest build version will be installed.
         #[arg(long, short)]
         version: Option<String>,
@@ -76,5 +81,10 @@ pub(crate) enum Commands {
         /// this.
         #[arg(long, default_value_t = *DEFAULT_MAX_DL_WORKERS)]
         max_download_workers: usize,
+        /// How much memory to use to store chunks. Lowering this value will potentially make
+        /// downloads slower while being lighter on memory usage. Raising it will make the program
+        /// use more memory if needed, but can potentially speed up downloads.
+        #[arg(long, default_value_t = *DEFAULT_MAX_MEMORY_USAGE)]
+        max_memory_usage: usize,
     },
 }

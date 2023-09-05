@@ -64,6 +64,7 @@ async fn main() {
             slug,
             version,
             max_download_workers,
+            max_memory_usage,
             path,
             base_path,
         } => {
@@ -84,6 +85,7 @@ async fn main() {
                 &install_path,
                 version,
                 max_download_workers,
+                max_memory_usage,
             )
             .await
             {
@@ -161,6 +163,7 @@ async fn main() {
         Commands::Update {
             slug,
             max_download_workers,
+            max_memory_usage,
         } => {
             let mut installed = InstalledConfig::load().expect("Failed to load installed");
             let install_info = match installed.remove(&slug) {
@@ -179,6 +182,7 @@ async fn main() {
                 &slug,
                 &install_info,
                 max_download_workers,
+                max_memory_usage,
             )
             .await
             {
