@@ -206,6 +206,23 @@ async fn main() {
                 }
             };
         }
+        Commands::Launch { slug } => {
+            let installed = InstalledConfig::load().expect("Failed to load installed");
+            let install_info = match installed.get(&slug) {
+                Some(info) => info,
+                None => {
+                    println!("{slug} is not installed");
+                    return;
+                }
+            };
+
+            match utils::launch(install_info).await {
+                Ok(_) => {}
+                Err(err) => {
+                    println!("Failed to launch {}: {:?}", slug, err);
+                }
+            };
+        }
     }
 }
 

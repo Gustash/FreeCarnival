@@ -5,6 +5,7 @@ use std::{
     time::Duration,
 };
 
+use async_recursion::async_recursion;
 use bytes::Bytes;
 use directories::ProjectDirs;
 use os_path::OsPath;
@@ -236,6 +237,55 @@ pub(crate) async fn update(
     .await?;
 
     Ok(Some(version))
+}
+
+pub(crate) async fn launch(install_info: &InstallInfo) -> tokio::io::Result<()> {
+    match find_exe_recursive(&install_info.install_path).await {
+        Some(exe) => {
+            println!("{} was selected", exe.display());
+        }
+        None => {
+            println!("Couldn't find suitable exe...");
+        }
+    };
+
+    Ok(())
+}
+
+#[async_recursion]
+async fn find_exe_recursive(path: &PathBuf) -> Option<PathBuf> {
+    let mut subdirs = vec![];
+
+    match tokio::fs::read_dir(path).await {
+        Ok(mut subpath) => {
+            while let Ok(Some(entry)) = subpath.next_entry().await {
+                let entry_path = entry.path();
+                if entry_path.is_file() {
+                    // Check if the current path is a file with a .exe extension
+                    println!("Checking file: {}", entry_path.display());
+                    if let Some(ext) = entry_path.extension() {
+                        if ext == "exe" {
+                            return Some(entry_path.to_path_buf());
+                        }
+                    }
+                } else if entry_path.is_dir() {
+                    subdirs.push(entry_path);
+                }
+            }
+        }
+        Err(err) => {
+            println!("Failed to iterate over {}: {:?}", path.display(), err);
+        }
+    }
+
+    for dir in subdirs {
+        println!("Checking directory: {}", dir.display());
+        if let Some(exe_path) = find_exe_recursive(&dir.to_path_buf()).await {
+            return Some(exe_path);
+        }
+    }
+
+    None
 }
 
 #[derive(PartialEq, Clone, Debug, Serialize, Deserialize)]

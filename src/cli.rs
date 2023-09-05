@@ -91,4 +91,7 @@ pub(crate) enum Commands {
         #[arg(long, short)]
         version: Option<String>,
     },
+    Launch {
+        slug: String,
+    },
 }
