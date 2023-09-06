@@ -1,22 +1,31 @@
 use std::collections::HashMap;
 
 use confy::ConfyError;
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use crate::{
     api::auth::{Product, UserInfo},
+    constants::PROJECT_NAME,
     shared::models::InstallInfo,
 };
 
 pub(crate) trait GalaConfig
 where
-    Self: Sized,
+    Self: Sized + Serialize + DeserializeOwned + Default,
 {
-    fn load() -> Result<Self, ConfyError>;
+    fn load() -> Result<Self, ConfyError> {
+        confy::load::<Self>(*PROJECT_NAME, Self::config_name())
+    }
 
-    fn store(&self) -> Result<(), ConfyError>;
+    fn store(&self) -> Result<(), ConfyError> {
+        confy::store(*PROJECT_NAME, Self::config_name(), self)
+    }
 
-    fn clear() -> Result<(), ConfyError>;
+    fn clear() -> Result<(), ConfyError> {
+        confy::store(*PROJECT_NAME, Self::config_name(), Self::default())
+    }
+
+    fn config_name() -> &'static str;
 }
 
 #[derive(Default, Debug, Serialize, Deserialize)]
@@ -25,16 +34,8 @@ pub(crate) struct UserConfig {
 }
 
 impl GalaConfig for UserConfig {
-    fn load() -> Result<UserConfig, ConfyError> {
-        confy::load::<UserConfig>("openGala", "user")
-    }
-
-    fn store(&self) -> Result<(), ConfyError> {
-        confy::store("openGala", "user", self)
-    }
-
-    fn clear() -> Result<(), ConfyError> {
-        confy::store("openGala", "user", UserConfig::default())
+    fn config_name() -> &'static str {
+        "user"
     }
 }
 
@@ -44,16 +45,8 @@ pub(crate) struct CookieConfig {
 }
 
 impl GalaConfig for CookieConfig {
-    fn load() -> Result<CookieConfig, ConfyError> {
-        confy::load::<CookieConfig>("openGala", "cookies")
-    }
-
-    fn store(&self) -> Result<(), ConfyError> {
-        confy::store("openGala", "cookies", self)
-    }
-
-    fn clear() -> Result<(), ConfyError> {
-        confy::store("openGala", "cookies", CookieConfig::default())
+    fn config_name() -> &'static str {
+        "cookies"
     }
 }
 
@@ -63,31 +56,15 @@ pub(crate) struct LibraryConfig {
 }
 
 impl GalaConfig for LibraryConfig {
-    fn load() -> Result<LibraryConfig, ConfyError> {
-        confy::load::<LibraryConfig>("openGala", "library")
-    }
-
-    fn store(&self) -> Result<(), ConfyError> {
-        confy::store("openGala", "library", self)
-    }
-
-    fn clear() -> Result<(), ConfyError> {
-        confy::store("openGala", "library", LibraryConfig::default())
+    fn config_name() -> &'static str {
+        "library"
     }
 }
 
 pub(crate) type InstalledConfig = HashMap<String, InstallInfo>;
 
 impl GalaConfig for InstalledConfig {
-    fn load() -> Result<Self, ConfyError> {
-        confy::load::<Self>("openGala", "installed")
-    }
-
-    fn store(&self) -> Result<(), ConfyError> {
-        confy::store("openGala", "installed", self)
-    }
-
-    fn clear() -> Result<(), ConfyError> {
-        confy::store("openGala", "installed", Self::default())
+    fn config_name() -> &'static str {
+        "installed"
     }
 }

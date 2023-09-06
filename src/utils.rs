@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
+    process::ExitStatus,
     sync::Arc,
     time::Duration,
 };
@@ -8,14 +9,17 @@ use std::{
 use async_recursion::async_recursion;
 use bytes::Bytes;
 use directories::ProjectDirs;
+use human_bytes::human_bytes;
 use os_path::OsPath;
 use queues::*;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::{
     fs::File,
     io::AsyncWriteExt,
     sync::{OwnedSemaphorePermit, Semaphore},
+    task::JoinHandle,
 };
 
 use crate::{
@@ -25,10 +29,11 @@ use crate::{
         product::{BuildManifestChunksRecord, BuildManifestRecord},
     },
     config::{GalaConfig, InstalledConfig, LibraryConfig},
-    constants::MAX_CHUNK_SIZE,
+    constants::{MAX_CHUNK_SIZE, PROJECT_NAME},
     shared::models::InstallInfo,
 };
 
+// TODO: Refactor info printing and chunk downloading to separate functions
 pub(crate) async fn install<'a>(
     client: reqwest::Client,
     slug: &String,
@@ -36,7 +41,8 @@ pub(crate) async fn install<'a>(
     version: Option<String>,
     max_download_workers: usize,
     max_memory_usage: usize,
-) -> Result<Result<String, &'a str>, reqwest::Error> {
+    info_only: bool,
+) -> Result<Result<(String, Option<String>), &'a str>, reqwest::Error> {
     let library = LibraryConfig::load().expect("Failed to load library");
     let product = match library
         .collection
@@ -77,6 +83,22 @@ pub(crate) async fn install<'a>(
     .await
     .expect("Failed to save build manifest");
 
+    if info_only {
+        let mut build_manifest_rdr = csv::Reader::from_reader(build_manifest.as_bytes());
+        let download_size = build_manifest_rdr
+            .deserialize::<BuildManifestRecord>()
+            .into_iter()
+            .fold(0f64, |acc, record| match record {
+                Ok(record) => acc + record.size_in_bytes as f64,
+                Err(_) => acc,
+            });
+
+        let mut buf = String::new();
+        buf.push_str(&format!("Download Size: {}", human_bytes(download_size)));
+        buf.push_str(&format!("\nDisk Size: {}", human_bytes(download_size)));
+        return Ok(Ok((buf, None)));
+    }
+
     println!("Fetching build manifest chunks...");
     let build_manifest_chunks =
         api::product::get_build_manifest_chunks(&client, &product, &build_version).await?;
@@ -105,7 +127,10 @@ pub(crate) async fn install<'a>(
     .expect("Failed to build from manifest");
 
     match result {
-        true => Ok(Ok(build_version)),
+        true => Ok(Ok((
+            format!("Successfully installed {} ({})", slug, build_version),
+            Some(build_version),
+        ))),
         false => Ok(Err(
             "Some chunks failed verification. Failed to install game.",
         )),
@@ -159,41 +184,44 @@ pub(crate) async fn update(
     selected_version: Option<String>,
     max_download_workers: usize,
     max_memory_usage: usize,
-) -> tokio::io::Result<Option<String>> {
+    info_only: bool,
+) -> tokio::io::Result<(String, Option<String>)> {
     let product = match library.collection.iter().find(|p| &p.slugged_name == slug) {
         Some(p) => p,
         None => {
-            println!("Couldn't find {slug} in library");
-            return Ok(None);
+            return Ok((format!("Couldn't find {slug} in library"), None));
         }
     };
     let version = match selected_version {
         Some(v) => v,
-        None => match api::product::get_latest_build_number(&client, product).await {
-            Ok(Some(v)) => v,
-            Ok(None) => {
-                println!("Couldn't find the latest version of {slug}");
-                return Ok(None);
+        None => {
+            println!("Fetching latest version...");
+            match api::product::get_latest_build_number(&client, product).await {
+                Ok(Some(v)) => v,
+                Ok(None) => {
+                    return Ok((format!("Couldn't find the latest version of {slug}"), None));
+                }
+                Err(err) => {
+                    return Ok((
+                        format!("Failed to fetch latest version for {slug}: {:?}", err),
+                        None,
+                    ));
+                }
             }
-            Err(err) => {
-                println!("Failed to fetch latest version for {slug}: {:?}", err);
-                return Ok(None);
-            }
-        },
+        }
     };
 
     if install_info.version == version {
-        println!("Build {version} is already installed");
-        return Ok(None);
+        return Ok((format!("Build {version} is already installed"), None));
     }
 
     let old_manifest = read_build_manifest(&install_info.version, slug, "manifest").await?;
 
+    println!("Fetching {} build manifest...", version);
     let new_manifest = match api::product::get_build_manifest(&client, &product, &version).await {
         Ok(m) => m,
         Err(err) => {
-            println!("Failed to fetch build manifest: {:?}", err);
-            return Ok(None);
+            return Ok((format!("Failed to fetch build manifest: {:?}", err), None));
         }
     };
     store_build_manifest(&new_manifest, &version, slug, "manifest").await?;
@@ -201,8 +229,10 @@ pub(crate) async fn update(
         match api::product::get_build_manifest_chunks(&client, &product, &version).await {
             Ok(m) => m,
             Err(err) => {
-                println!("Failed to fetch build manifest chunks: {:?}", err);
-                return Ok(None);
+                return Ok((
+                    format!("Failed to fetch build manifest chunks: {:?}", err),
+                    None,
+                ));
             }
         };
     store_build_manifest(&new_manifest_chunks, &version, slug, "manifest_chunks").await?;
@@ -224,6 +254,50 @@ pub(crate) async fn update(
     )
     .await?;
 
+    if info_only {
+        let mut delta_build_manifest_rdr = csv::Reader::from_reader(delta_manifest.as_bytes());
+        let download_size = delta_build_manifest_rdr
+            .deserialize::<BuildManifestRecord>()
+            .into_iter()
+            .fold(0f64, |acc, record| match record {
+                Ok(record) => match record.tag {
+                    Some(ChangeTag::Removed) => acc,
+                    _ => acc + record.size_in_bytes as f64,
+                },
+                Err(_) => acc,
+            });
+        let mut new_build_manifest_rdr = csv::Reader::from_reader(new_manifest.as_bytes());
+        let disk_size = new_build_manifest_rdr
+            .deserialize::<BuildManifestRecord>()
+            .into_iter()
+            .fold(0f64, |acc, record| match record {
+                Ok(record) => acc + record.size_in_bytes as f64,
+                Err(_) => acc,
+            });
+
+        let mut old_manifest_rdr = csv::Reader::from_reader(old_manifest.as_bytes());
+        let old_disk_size = old_manifest_rdr
+            .deserialize::<BuildManifestRecord>()
+            .into_iter()
+            .fold(0f64, |acc, record| match record {
+                Ok(record) => acc + record.size_in_bytes as f64,
+                Err(_) => acc,
+            });
+
+        let needed_space = disk_size - old_disk_size;
+        println!("{}", needed_space);
+
+        let mut buf = String::new();
+        buf.push_str(&format!("Download Size: {}", human_bytes(download_size)));
+        buf.push_str(&format!(
+            "\nNeeded Space: {}{}",
+            if needed_space < 0f64 { "-" } else { "" },
+            human_bytes(needed_space.abs())
+        ));
+        buf.push_str(&format!("\nTotal Disk Size: {}", human_bytes(disk_size)));
+        return Ok((buf, None));
+    }
+
     let product_arc = Arc::new(product.clone());
     build_from_manifest(
         client,
@@ -236,24 +310,113 @@ pub(crate) async fn update(
     )
     .await?;
 
-    Ok(Some(version))
+    Ok((format!("Updated {slug} successfully."), Some(version)))
 }
 
-pub(crate) async fn launch(install_info: &InstallInfo) -> tokio::io::Result<()> {
-    match find_exe_recursive(&install_info.install_path).await {
-        Some(exe) => {
-            println!("{} was selected", exe.display());
-        }
-        None => {
-            println!("Couldn't find suitable exe...");
+pub(crate) async fn launch(
+    client: reqwest::Client,
+    product: &Product,
+    install_info: &InstallInfo,
+    wine_bin: PathBuf,
+    wine_prefix: Option<PathBuf>,
+) -> tokio::io::Result<Option<ExitStatus>> {
+    let game_details = match api::product::get_game_details(&client, &product).await {
+        Ok(details) => details,
+        Err(err) => {
+            println!("Failed to fetch game details. Launch might fail: {:?}", err);
+
+            None
         }
     };
 
-    Ok(())
+    let exe_path = match game_details {
+        Some(details) => match details.exe_path {
+            Some(exe_path) => {
+                // Not too sure about this. At least syberia-ii prepends the slugged name to the
+                // path of the exe. I assume the galaClient always installs in folders with the
+                // slugged name, but since we don't do that here, we skip it.
+                // This might break if some games don't do this, and if that happens, we should
+                // find a better solution for handling this.
+                let re = Regex::new(&format!("^{}\\\\", product.slugged_name)).unwrap();
+                let dirless_path = re.replace(&exe_path, "");
+
+                Some(dirless_path.into_owned())
+            }
+            None => None,
+        },
+        None => None,
+    };
+    let exe = match exe_path {
+        Some(path) => OsPath::from(&install_info.install_path).join(path),
+        None => match find_exe_recursive(&install_info.install_path).await {
+            Some(exe) => exe,
+            None => {
+                println!("Couldn't find suitable exe...");
+                return Ok(None);
+            }
+        },
+    };
+    println!("{} was selected", exe);
+
+    let mut command = tokio::process::Command::new(wine_bin);
+    command.arg(exe);
+    // TODO:
+    // Handle cwd and launch args. Since I don't have games that have these I don't have a
+    // reliable way to test...
+    if let Some(wine_prefix) = wine_prefix {
+        command.env("WINEPREFIX", wine_prefix);
+    }
+    let mut child = command.spawn()?;
+
+    let status = child.wait().await?;
+
+    Ok(Some(status))
+}
+
+pub(crate) async fn verify(slug: &String, install_info: &InstallInfo) -> tokio::io::Result<bool> {
+    let mut handles: Vec<JoinHandle<bool>> = vec![];
+
+    let build_manifest = read_build_manifest(&install_info.version, slug, "manifest").await?;
+    let mut build_manifest_rdr = csv::Reader::from_reader(build_manifest.as_bytes());
+
+    for record in build_manifest_rdr.deserialize::<BuildManifestRecord>() {
+        let record = record.expect("Failed to deserialize build manifest");
+
+        if record.flags == 40 || record.size_in_bytes == 0 {
+            continue;
+        }
+
+        let file_path = OsPath::from(install_info.install_path.join(&record.file_name));
+        if !tokio::fs::try_exists(&file_path).await? {
+            println!("{} is missing", record.file_name);
+            return Ok(false);
+        }
+
+        handles.push(tokio::spawn(async move {
+            match verify_file_hash(&file_path, &record.sha) {
+                Ok(result) => result,
+                Err(err) => {
+                    println!("Failed to verify {}: {:?}", record.file_name, err);
+
+                    false
+                }
+            }
+        }));
+    }
+
+    let mut result = true;
+    for handle in handles {
+        if !handle.await? {
+            result = false;
+            break;
+        }
+    }
+
+    Ok(result)
 }
 
 #[async_recursion]
-async fn find_exe_recursive(path: &PathBuf) -> Option<PathBuf> {
+async fn find_exe_recursive(path: &PathBuf) -> Option<OsPath> {
     let mut subdirs = vec![];
 
     match tokio::fs::read_dir(path).await {
@@ -263,9 +426,18 @@ async fn find_exe_recursive(path: &PathBuf) -> Option<PathBuf> {
                 if entry_path.is_file() {
                     // Check if the current path is a file with a .exe extension
                     println!("Checking file: {}", entry_path.display());
-                    if let Some(ext) = entry_path.extension() {
-                        if ext == "exe" {
-                            return Some(entry_path.to_path_buf());
+                    if let (Some(ext), Some(file_name)) =
+                        (entry_path.extension(), entry_path.file_name())
+                    {
+                        let file_name_str = String::from(match file_name.to_str() {
+                            Some(str) => str.to_lowercase(),
+                            None => String::new(),
+                        });
+                        if ext == "exe"
+                            && !file_name_str.contains("setup")
+                            && !file_name_str.contains("unins")
+                        {
+                            return Some(OsPath::from(entry_path));
                         }
                     }
                 } else if entry_path.is_dir() {
@@ -281,7 +453,7 @@ async fn find_exe_recursive(path: &PathBuf) -> Option<PathBuf> {
     for dir in subdirs {
         println!("Checking directory: {}", dir.display());
         if let Some(exe_path) = find_exe_recursive(&dir.to_path_buf()).await {
-            return Some(exe_path);
+            return Some(OsPath::from(exe_path));
         }
     }
 
@@ -318,7 +490,7 @@ async fn read_or_generate_delta_manifest(
         .map(|r| r.expect("Failed to deserialize updated build manifest"))
         .collect();
     let mut old_manifest_rdr = csv::Reader::from_reader(old_manifest_bytes);
-    let old_manifest_hash: Vec<BuildManifestRecord> = old_manifest_rdr
+    let old_manifest_iter: Vec<BuildManifestRecord> = old_manifest_rdr
         .deserialize::<BuildManifestRecord>()
         .into_iter()
         .map(|r| r.expect("Failed to deserialize old build manifest"))
@@ -331,37 +503,41 @@ async fn read_or_generate_delta_manifest(
     let mut build_manifest_delta_wtr = csv::Writer::from_writer(vec![]);
 
     for new_entry in &new_manifest_iter {
-        if !old_manifest_hash
+        let added = !old_manifest_iter
             .iter()
-            .any(|entry| entry.file_name == new_entry.file_name)
-        {
-            println!("{} was added", new_entry.file_name);
+            .any(|entry| entry.file_name == new_entry.file_name);
+
+        if added {
+            println!("{} was added", new_entry.file_name,);
             build_manifest_delta_wtr
                 .serialize(BuildManifestRecord {
                     tag: Some(ChangeTag::Added),
                     ..new_entry.clone()
                 })
                 .expect("Failed to serialize delta build manifest");
-        }
-    }
-
-    for old_entry in old_manifest_hash {
-        if let Some(new_entry) = new_manifest_iter
-            .iter()
-            .find(|entry| entry.file_name == old_entry.file_name)
-        {
-            if old_entry.sha != new_entry.sha {
-                println!("{} was modified", old_entry.file_name);
-                build_manifest_delta_wtr
-                    .serialize(BuildManifestRecord {
-                        tag: Some(ChangeTag::Modified),
-                        ..new_entry.clone()
-                    })
-                    .expect("Failed to serialize delta build manifest");
-            }
             continue;
         }
 
+        let modified = match old_manifest_iter
+            .iter()
+            .find(|entry| entry.file_name == new_entry.file_name)
+        {
+            Some(old_entry) => old_entry.sha != new_entry.sha,
+            None => false,
+        };
+
+        if modified {
+            println!("{} was modified", new_entry.file_name,);
+            build_manifest_delta_wtr
+                .serialize(BuildManifestRecord {
+                    tag: Some(ChangeTag::Modified),
+                    ..new_entry.clone()
+                })
+                .expect("Failed to serialize delta build manifest");
+        }
+    }
+
+    for old_entry in old_manifest_iter {
         if !new_file_names.contains(&old_entry.file_name) {
             println!("{} was deleted", old_entry.file_name);
             build_manifest_delta_wtr
@@ -412,11 +588,20 @@ async fn read_or_generate_delta_chunks_manifest(
 
     for record in new_manifest_rdr.deserialize::<BuildManifestChunksRecord>() {
         let record = record.expect("Failed to deserialize build manifest chunks");
+        println!("Current record: {}", record.file_path);
 
-        // We want to ignore chunks for removed files
-        while current_file.tag == Some(ChangeTag::Removed) {
+        // Removed files are always last in the delta manifest, so we can break here
+        if current_file.tag == Some(ChangeTag::Removed) {
+            break;
+        }
+
+        // We want to ignore chunks for removed files and folders
+        while current_file.flags == 40 || current_file.size_in_bytes == 0 {
             current_file = match delta_manifest.next() {
-                Some(file) => file.expect("Failed to deserialize build manifest delta"),
+                Some(file) => {
+                    println!("Skipping over {}", current_file.file_name);
+                    file.expect("Failed to deserialize build manifest delta")
+                }
                 None => {
                     println!("Done processing delta chunks");
                     break;
@@ -424,6 +609,7 @@ async fn read_or_generate_delta_chunks_manifest(
             };
         }
 
+        println!("Current file: {}", current_file.file_name);
         if record.file_path != current_file.file_name {
             continue;
         }
@@ -464,7 +650,7 @@ async fn store_build_manifest(
     file_suffix: &str,
 ) -> tokio::io::Result<()> {
     // TODO: Move appName to constant
-    let project = ProjectDirs::from("rs", "", "openGala").unwrap();
+    let project = ProjectDirs::from("rs", "", *PROJECT_NAME).unwrap();
     let path = project.config_dir().join("manifests").join(product_slug);
     tokio::fs::create_dir_all(&path).await?;
 
@@ -478,7 +664,7 @@ async fn read_build_manifest(
     file_suffix: &str,
 ) -> tokio::io::Result<String> {
     // TODO: Move appName to constant
-    let project = ProjectDirs::from("rs", "", "openGala").unwrap();
+    let project = ProjectDirs::from("rs", "", *PROJECT_NAME).unwrap();
     let path = project
         .config_dir()
         .join("manifests")
@@ -541,6 +727,7 @@ async fn build_from_manifest(
     let mut manifest_chunks_rdr = csv::Reader::from_reader(build_manifest_chunks_bytes);
     for record in manifest_chunks_rdr.deserialize::<BuildManifestChunksRecord>() {
         let record = record.expect("Failed to deserialize chunks manifest");
+
         let is_last = file_chunk_num_map[&record.file_path] - 1 == usize::from(record.id);
         if is_last {
             file_chunk_num_map.remove(&record.file_path);
@@ -719,46 +906,6 @@ async fn prepare_file_folder(
     // File Name is a directory. We should create this directory.
     if flags == 40 && !file_path.exists() {
         tokio::fs::create_dir(&file_path).await?;
-    }
-
-    Ok(())
-}
-
-async fn verify(install_path: &OsPath, build_manifest_bytes: &[u8]) -> tokio::io::Result<()> {
-    let mut thread_handlers = vec![];
-    let mut manifest = csv::Reader::from_reader(build_manifest_bytes);
-
-    for record in manifest.deserialize::<BuildManifestRecord>() {
-        let record = record.expect("Failed to deserialize build manifest");
-        let local_file_path = install_path.join(&record.file_name);
-
-        thread_handlers.push(tokio::spawn(async move {
-            if record.flags == 40 {
-                // Is directory and doesn't exist
-                if !local_file_path.to_path().is_dir() {
-                    println!("Warning: {} is not a directory", local_file_path);
-                }
-                return;
-            }
-
-            if !local_file_path.exists() {
-                println!("Warning: {} is missing", local_file_path);
-                return;
-            }
-
-            println!("Verifying {}", &record.file_name);
-            match verify_file_hash(&local_file_path, &record.sha) {
-                Ok(true) => println!("{} is valid", &record.file_name),
-                _ => println!(
-                    "Warning: {} does not match the expected signature",
-                    local_file_path
-                ),
-            }
-        }));
-    }
-
-    for handler in thread_handlers {
-        handler.await?;
     }
 
     Ok(())

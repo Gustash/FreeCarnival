@@ -1,3 +1,4 @@
+use chrono::NaiveDateTime;
 use reqwest::header::HeaderMap;
 use serde::{Deserialize, Serialize};
 
@@ -60,11 +61,39 @@ pub(crate) struct ProductVersion {
     enabled: u8,
     version: String,
     os: String,
+    date: NaiveDateTime,
+    text: String,
 }
 
 impl std::fmt::Display for Product {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "[{}]\t{} ({})", self.slugged_name, self.name, self.id)
+        write!(
+            f,
+            "[{}]\t{} (ID: {})",
+            self.slugged_name, self.name, self.id
+        )
+    }
+}
+
+impl std::fmt::Display for ProductVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[{}]\n", self.version)?;
+        write!(f, "Build Date: {}\n", self.date)?;
+        write!(
+            f,
+            "Platform: {}",
+            match &self.os[..] {
+                "win" => "Windows",
+                "lin" => "Linux",
+                "mac" => "macOS",
+                os => os,
+            }
+        )?;
+        if !self.text.is_empty() {
+            write!(f, "\nAbout:\n\n{}", self.text)?;
+        }
+
+        Ok(())
     }
 }
 

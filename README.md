@@ -1,4 +1,4 @@
-# openGala
+# FreeCarnival
 
 ## This is still very early stages
 
@@ -8,4 +8,4 @@
 - [x] Installing games
 - [x] Updating games
 - [x] Uninstalling games
-- [ ] Launching games
+- [x] Launching games

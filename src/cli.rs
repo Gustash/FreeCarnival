@@ -10,7 +10,7 @@ use crate::constants::{DEFAULT_MAX_DL_WORKERS, DEFAULT_MAX_MEMORY_USAGE};
     author,
     version,
     about,
-    long_about = "openGala is a native and cross-platform CLI program to install and launch indieGala games"
+    long_about = "FreeCarnival is a native and cross-platform CLI program to install and launch IndieGala games"
 )]
 pub(crate) struct Cli {
     #[command(subcommand)]
@@ -59,6 +59,9 @@ pub(crate) enum Commands {
         /// creating additional subdirectories.
         #[arg(long)]
         path: Option<PathBuf>,
+        /// Print download info instead of installing game
+        #[arg(long, short, default_value_t = false)]
+        info: bool,
     },
     /// Uninstalls a game
     Uninstall {
@@ -87,11 +90,27 @@ pub(crate) enum Commands {
         #[arg(long, default_value_t = *DEFAULT_MAX_MEMORY_USAGE)]
         max_memory_usage: usize,
         /// Change to a specific version. Don't set this if you just want to update to the latest
-        /// version
+        /// version.
+        ///
+        /// You can get a list of available versions by using the `info` command.
         #[arg(long, short)]
         version: Option<String>,
+        /// Print download info instead of updating game
+        #[arg(long, short, default_value_t = false)]
+        info: bool,
     },
+    /// Launch an installed game
     Launch {
         slug: String,
+        /// The WINE prefix to use for this game
+        #[arg(long)]
+        wine_prefix: Option<PathBuf>,
+        /// The WINE bin to use for launching the game
+        #[arg(long)]
+        wine_bin: PathBuf,
     },
+    /// Print info about game
+    Info { slug: String },
+    /// Verify file integrity for an installed game
+    Verify { slug: String },
 }

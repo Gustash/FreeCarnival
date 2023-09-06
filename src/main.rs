@@ -67,9 +67,10 @@ async fn main() {
             max_memory_usage,
             path,
             base_path,
+            info,
         } => {
             let mut installed = InstalledConfig::load().expect("Failed to load installed");
-            if installed.contains_key(&slug) {
+            if installed.contains_key(&slug) && !info {
                 println!("{slug} already installed.");
                 return;
             }
@@ -86,16 +87,20 @@ async fn main() {
                 version,
                 max_download_workers,
                 max_memory_usage,
+                info,
             )
             .await
             {
-                Ok(Ok(installed_version)) => {
-                    println!("Successfully installed {} ({})", &slug, &installed_version);
+                Ok(Ok((info, Some(installed_version)))) => {
+                    println!("{}", info);
 
                     installed.insert(slug, InstallInfo::new(install_path, installed_version));
                     installed
                         .store()
                         .expect("Failed to update installed config");
+                }
+                Ok(Ok((info, None))) => {
+                    println!("{}", info);
                 }
                 Ok(Err(err)) => {
                     println!("Failed to install {}: {:?}", &slug, err);
@@ -165,6 +170,7 @@ async fn main() {
             version,
             max_download_workers,
             max_memory_usage,
+            info,
         } => {
             let mut installed = InstalledConfig::load().expect("Failed to load installed");
             let install_info = match installed.remove(&slug) {
@@ -185,11 +191,12 @@ async fn main() {
                 version,
                 max_download_workers,
                 max_memory_usage,
+                info,
             )
             .await
             {
-                Ok(Some(installed_version)) => {
-                    println!("Updated {slug} successfully.");
+                Ok((info, Some(installed_version))) => {
+                    println!("{}", info);
                     installed.insert(
                         slug,
                         InstallInfo::new(install_info.install_path, installed_version),
@@ -198,16 +205,21 @@ async fn main() {
                         .store()
                         .expect("Failed to update installed config");
                 }
-                Ok(None) => {
-                    println!("Failed to update {slug}");
+                Ok((info, None)) => {
+                    println!("{}", info);
                 }
                 Err(err) => {
                     println!("Failed to update {slug}: {:?}", err);
                 }
             };
         }
-        Commands::Launch { slug } => {
+        Commands::Launch {
+            slug,
+            wine_bin,
+            wine_prefix,
+        } => {
             let installed = InstalledConfig::load().expect("Failed to load installed");
+            let library = LibraryConfig::load().expect("Failed to load library");
             let install_info = match installed.get(&slug) {
                 Some(info) => info,
                 None => {
@@ -215,13 +227,79 @@ async fn main() {
                     return;
                 }
             };
+            let product = match library.collection.iter().find(|p| p.slugged_name == slug) {
+                Some(prod) => prod,
+                None => {
+                    println!("Couldn't find {slug} in library");
+                    return;
+                }
+            };
 
-            match utils::launch(install_info).await {
-                Ok(_) => {}
+            let gala_req = GalaRequest::new();
+            match utils::launch(
+                gala_req.client,
+                product,
+                install_info,
+                wine_bin,
+                wine_prefix,
+            )
+            .await
+            {
+                Ok(Some(status)) => {
+                    println!("Process exited with: {}", status);
+                }
+                Ok(None) => {
+                    println!("Failed to launch {slug}");
+                }
                 Err(err) => {
                     println!("Failed to launch {}: {:?}", slug, err);
                 }
             };
+        }
+        Commands::Info { slug } => {
+            let library = LibraryConfig::load().expect("Failed to load library");
+            let product = match library.collection.iter().find(|p| p.slugged_name == slug) {
+                Some(p) => p,
+                None => {
+                    println!("{slug} is not in your library");
+                    return;
+                }
+            };
+
+            let installed = InstalledConfig::load().expect("Failed to load installed");
+            let install_info = installed.get(&slug);
+
+            println!(
+                "Available Versions:\n{}",
+                product
+                    .version
+                    .iter()
+                    .map(|v| format!("\n{}", v))
+                    .collect::<Vec<String>>()
+                    .join("\n")
+            );
+        }
+        Commands::Verify { slug } => {
+            let installed = InstalledConfig::load().expect("Failed to load installed");
+            let install_info = match installed.get(&slug) {
+                Some(info) => info,
+                None => {
+                    println!("{slug} is not installed.");
+                    return;
+                }
+            };
+
+            match utils::verify(&slug, install_info).await {
+                Ok(true) => {
+                    println!("{slug} passed verification.");
+                }
+                Ok(false) => {
+                    println!("{slug} is corrupted. Please reinstall.");
+                }
+                Err(err) => {
+                    println!("Failed to verify files: {}", err);
+                }
+            }
         }
     }
 }

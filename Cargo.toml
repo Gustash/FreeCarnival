@@ -1,5 +1,5 @@
 [package]
-name = "open-gala"
+name = "freecarnival"
 version = "0.1.0"
 edition = "2021"
 
@@ -9,6 +9,7 @@ edition = "2021"
 async-recursion = "1.0.5"
 base16ct = { version = "0.2.0", features = ["alloc"] }
 bytes = "1.4.0"
+chrono = { version = "0.4.29", features = ["serde"] }
 clap = { version = "4.3.21", features = ["derive"] }
 confy = { version = "0.5.1", features = [
 	"yaml_conf",
@@ -18,10 +19,12 @@ crossbeam-channel = "0.5.8"
 csv = "1.2.2"
 directories = "5.0.1"
 futures = "0.3.28"
+human_bytes = { version = "0.4.2", default-features = false }
 lazy_static = "1.4.0"
 num_cpus = "1.16.0"
 os_path = "0.6.3"
 queues = "1.1.0"
+regex = { version = "1.9.5", default-features = false }
 reqwest = { version = "0.11.18", features = ["json", "cookies", "rustls-tls"] }
 rpassword = "7.2.0"
 serde = { version = "1.0.183", features = ["derive"] }

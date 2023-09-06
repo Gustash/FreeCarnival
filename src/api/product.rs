@@ -1,7 +1,10 @@
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
-use crate::{constants::CONTENT_URL, utils::ChangeTag};
+use crate::{
+    constants::{CONTENT_URL, DEV_URL},
+    utils::ChangeTag,
+};
 
 use super::auth::Product;
 
@@ -128,6 +131,54 @@ pub(crate) async fn download_chunk(
     let res = client.get(get_chunk_url(product, chunk_sha)).send().await?;
     let bytes = res.bytes().await?;
     Ok(bytes)
+}
+
+#[derive(Debug, Deserialize)]
+struct GameDetailsResponse {
+    status: String,
+    message: String,
+    product_data: GameDetails,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub(crate) struct GameDetails {
+    pub(crate) exe_path: Option<String>,
+    pub(crate) args: Option<String>,
+    pub(crate) cwd: Option<String>,
+}
+
+pub(crate) async fn get_game_details(
+    client: &reqwest::Client,
+    product: &Product,
+) -> Result<Option<GameDetails>, reqwest::Error> {
+    let query = &[
+        ("dev_id", &product.namespace),
+        ("prod_name", &product.slugged_name),
+    ];
+    let res = client
+        .get(format!("{}/get_product_info", *DEV_URL))
+        .query(query)
+        .send()
+        .await?;
+
+    let body = res.text().await?;
+    match serde_json::from_str::<GameDetailsResponse>(&body) {
+        Ok(data) => {
+            if data.status != "success" {
+                println!("Server failed to deliver game details");
+                return Ok(None);
+            }
+
+            Ok(Some(data.product_data))
+        }
+        Err(_) => {
+            println!(
+                "Failed to get game details for {}. Are you logged in?",
+                product.name
+            );
+            Ok(None)
+        }
+    }
 }
 
 fn get_chunk_url(product: &Product, chunk_sha: &String) -> String {
