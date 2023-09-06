@@ -382,7 +382,7 @@ pub(crate) async fn verify(slug: &String, install_info: &InstallInfo) -> tokio::
     for record in build_manifest_rdr.deserialize::<BuildManifestRecord>() {
         let record = record.expect("Failed to deserialize build manifest");
 
-        if record.is_directory() || record.size_in_bytes == 0 {
+        if record.is_directory() {
             continue;
         }
 
@@ -596,7 +596,7 @@ async fn read_or_generate_delta_chunks_manifest(
         }
 
         // We want to ignore chunks for removed files and folders
-        while current_file.is_directory() || current_file.size_in_bytes == 0 {
+        while current_file.is_directory() || current_file.is_empty() {
             current_file = match delta_manifest.next() {
                 Some(file) => {
                     println!("Skipping over {}", current_file.file_name);
@@ -886,7 +886,6 @@ async fn build_from_manifest(
 
 async fn open_file(file_path: &OsPath) -> tokio::io::Result<File> {
     tokio::fs::OpenOptions::new()
-        .create(true)
         .append(true)
         .open(file_path)
         .await
@@ -904,8 +903,10 @@ async fn prepare_file(
     let file_path = base_install_path.join(file_name);
 
     // File is a directory. We should create this directory.
-    if is_directory && !file_path.exists() {
-        tokio::fs::create_dir(&file_path).await?;
+    if is_directory {
+        if !file_path.exists() {
+            tokio::fs::create_dir(&file_path).await?;
+        }
         return Ok(());
     }
 

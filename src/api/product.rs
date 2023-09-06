@@ -77,6 +77,10 @@ impl BuildManifestRecord {
     pub(crate) fn is_directory(&self) -> bool {
         self.flags == 40
     }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.size_in_bytes == 0
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
