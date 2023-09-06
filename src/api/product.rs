@@ -73,6 +73,12 @@ pub(crate) struct BuildManifestRecord {
     pub(crate) tag: Option<ChangeTag>,
 }
 
+impl BuildManifestRecord {
+    pub(crate) fn is_directory(&self) -> bool {
+        self.flags == 40
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub(crate) struct BuildManifestChunksRecord {
     #[serde(rename = "ID")]

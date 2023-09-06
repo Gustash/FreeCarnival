@@ -382,7 +382,7 @@ pub(crate) async fn verify(slug: &String, install_info: &InstallInfo) -> tokio::
     for record in build_manifest_rdr.deserialize::<BuildManifestRecord>() {
         let record = record.expect("Failed to deserialize build manifest");
 
-        if record.flags == 40 || record.size_in_bytes == 0 {
+        if record.is_directory() || record.size_in_bytes == 0 {
             continue;
         }
 
@@ -596,7 +596,7 @@ async fn read_or_generate_delta_chunks_manifest(
         }
 
         // We want to ignore chunks for removed files and folders
-        while current_file.flags == 40 || current_file.size_in_bytes == 0 {
+        while current_file.is_directory() || current_file.size_in_bytes == 0 {
             current_file = match delta_manifest.next() {
                 Some(file) => {
                     println!("Skipping over {}", current_file.file_name);
@@ -697,7 +697,7 @@ async fn build_from_manifest(
 
         if record.tag == Some(ChangeTag::Modified) || record.tag == Some(ChangeTag::Removed) {
             let file_path = install_path.join(&record.file_name);
-            if record.flags == 40 {
+            if record.is_directory() {
                 // Is a directory
                 if file_path.exists() && file_path.is_dir() {
                     // Delete this directory
@@ -716,9 +716,9 @@ async fn build_from_manifest(
             }
         }
 
-        prepare_file_folder(&install_path, &record.file_name, record.flags).await?;
+        prepare_file(&install_path, &record.file_name, record.is_directory()).await?;
 
-        if record.flags != 40 {
+        if !record.is_directory() {
             file_chunk_num_map.insert(record.file_name.clone(), record.chunks);
         }
     }
@@ -896,17 +896,21 @@ async fn append_chunk(file: &mut tokio::fs::File, chunk: Bytes) -> tokio::io::Re
     file.write_all(&chunk).await
 }
 
-async fn prepare_file_folder(
+async fn prepare_file(
     base_install_path: &OsPath,
     file_name: &String,
-    flags: u8,
+    is_directory: bool,
 ) -> tokio::io::Result<()> {
     let file_path = base_install_path.join(file_name);
 
-    // File Name is a directory. We should create this directory.
-    if flags == 40 && !file_path.exists() {
+    // File is a directory. We should create this directory.
+    if is_directory && !file_path.exists() {
         tokio::fs::create_dir(&file_path).await?;
+        return Ok(());
     }
+
+    // Create empty file.
+    tokio::fs::File::create(&file_path).await?;
 
     Ok(())
 }
