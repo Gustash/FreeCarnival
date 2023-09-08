@@ -42,6 +42,7 @@ pub(crate) async fn install<'a>(
     max_download_workers: usize,
     max_memory_usage: usize,
     info_only: bool,
+    skip_verify: bool,
 ) -> Result<Result<(String, Option<String>), &'a str>, reqwest::Error> {
     let library = LibraryConfig::load().expect("Failed to load library");
     let product = match library
@@ -122,6 +123,7 @@ pub(crate) async fn install<'a>(
         install_path.into(),
         max_download_workers,
         max_memory_usage,
+        skip_verify,
     )
     .await
     .expect("Failed to build from manifest");
@@ -185,6 +187,7 @@ pub(crate) async fn update(
     max_download_workers: usize,
     max_memory_usage: usize,
     info_only: bool,
+    skip_verify: bool,
 ) -> tokio::io::Result<(String, Option<String>)> {
     let product = match library.collection.iter().find(|p| &p.slugged_name == slug) {
         Some(p) => p,
@@ -307,6 +310,7 @@ pub(crate) async fn update(
         OsPath::from(&install_info.install_path),
         max_download_workers,
         max_memory_usage,
+        skip_verify,
     )
     .await?;
 
@@ -681,6 +685,7 @@ async fn build_from_manifest(
     install_path: OsPath,
     max_download_workers: usize,
     max_memory_usage: usize,
+    skip_verify: bool,
 ) -> tokio::io::Result<bool> {
     let mut write_queue = queue![];
     let mut chunk_queue = queue![];
@@ -855,22 +860,27 @@ async fn build_from_manifest(
                             &record.sha, &record.file_path
                         );
                         return false;
+            if !skip_verify {
+                let chunk_parts = &record.sha.split("_").collect::<Vec<&str>>();
+                match chunk_parts.last() {
+                    Some(chunk_sha) => {
+                        // println!("Verifying {}", record.sha);
+                        let chunk_corrupted = !verify_chunk(&chunk, chunk_sha);
+
+                        if chunk_corrupted {
+                            println!(
+                                "{} failed verification. {} is corrupted.",
+                                &record.sha, &record.file_path
+                            );
+                            return false;
+                        }
                     }
-                }
-                None => {
-                    println!("Couldn't find Chunk SHA. Skipping verification...");
+                    None => {
+                        println!("Couldn't find Chunk SHA. Skipping verification...");
+                    }
                 }
             }
 
-            println!(
-                "Sending {} to writer thread ({})",
-                record.sha,
-                if thread_tx.is_empty() {
-                    "empty"
-                } else {
-                    "not empty"
-                }
-            );
             thread_tx.send((record, chunk, permit)).unwrap();
 
             true

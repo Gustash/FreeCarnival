@@ -59,15 +59,19 @@ pub(crate) enum Commands {
         /// creating additional subdirectories.
         #[arg(long)]
         path: Option<PathBuf>,
-        /// Print download info instead of installing game
-        #[arg(long, short, default_value_t = false)]
+        /// Print download info instead of installing game.
+        #[arg(long, short)]
         info: bool,
+        /// Skip verifying chunks. This will make downloads faster but won't check for
+        /// corrupted/tampered files.
+        #[arg(long)]
+        skip_verify: bool,
     },
     /// Uninstalls a game
     Uninstall {
         slug: String,
         /// Remove game from installed config but do not delete install folder.
-        #[arg(long, default_value_t = false)]
+        #[arg(long)]
         keep: bool,
     },
     /// Lists available updates for installed games.
@@ -95,9 +99,13 @@ pub(crate) enum Commands {
         /// You can get a list of available versions by using the `info` command.
         #[arg(long, short)]
         version: Option<String>,
-        /// Print download info instead of updating game
-        #[arg(long, short, default_value_t = false)]
+        /// Print download info instead of updating game.
+        #[arg(long, short)]
         info: bool,
+        /// Skip verifying chunks. This will make downloads faster but won't check for
+        /// corrupted/tampered files.
+        #[arg(long)]
+        skip_verify: bool,
     },
     /// Launch an installed game
     Launch {

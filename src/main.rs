@@ -68,6 +68,7 @@ async fn main() {
             path,
             base_path,
             info,
+            skip_verify,
         } => {
             let mut installed = InstalledConfig::load().expect("Failed to load installed");
             if installed.contains_key(&slug) && !info {
@@ -88,6 +89,7 @@ async fn main() {
                 max_download_workers,
                 max_memory_usage,
                 info,
+                skip_verify,
             )
             .await
             {
@@ -171,6 +173,7 @@ async fn main() {
             max_download_workers,
             max_memory_usage,
             info,
+            skip_verify,
         } => {
             let mut installed = InstalledConfig::load().expect("Failed to load installed");
             let install_info = match installed.remove(&slug) {
@@ -192,6 +195,7 @@ async fn main() {
                 max_download_workers,
                 max_memory_usage,
                 info,
+                skip_verify,
             )
             .await
             {
