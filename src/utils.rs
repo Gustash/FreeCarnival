@@ -9,6 +9,7 @@ use async_recursion::async_recursion;
 use bytes::Bytes;
 use directories::ProjectDirs;
 use human_bytes::human_bytes;
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use os_path::OsPath;
 use queues::*;
 use regex::Regex;
@@ -693,6 +694,9 @@ async fn build_from_manifest(
     tokio::fs::create_dir_all(&install_path).await?;
 
     let mut file_chunk_num_map = HashMap::new();
+    let mut total_bytes = 0u64;
+
+    let m = MultiProgress::new();
 
     println!("Building folder structure...");
     let mut manifest_rdr = csv::Reader::from_reader(build_manifest_bytes);
@@ -724,8 +728,21 @@ async fn build_from_manifest(
 
         if !record.is_directory() {
             file_chunk_num_map.insert(record.file_name.clone(), record.chunks);
+            total_bytes += record.size_in_bytes as u64;
         }
     }
+
+    let dl_sty =
+        ProgressStyle::with_template("{wide_msg} Download: {binary_bytes_per_sec}").unwrap();
+    let wr_sty = ProgressStyle::with_template(
+        "{wide_msg} Disk: {binary_bytes_per_sec}\n[{percent}%] {wide_bar} {bytes:>7}/{total_bytes:7} [{eta_precise}]",
+    )
+    .unwrap()
+    .progress_chars("##-");
+
+    let dl_prog = Arc::new(m.add(ProgressBar::new(total_bytes).with_style(dl_sty)));
+    let wrt_prog =
+        Arc::new(m.insert_after(&dl_prog, ProgressBar::new(total_bytes).with_style(wr_sty)));
 
     println!("Building queue...");
     let mut manifest_chunks_rdr = csv::Reader::from_reader(build_manifest_chunks_bytes);
@@ -783,11 +800,14 @@ async fn build_from_manifest(
                             let file = file_map.get_mut(&file_path).unwrap();
                             write_queue.remove().unwrap();
                             // println!("Writing {}", next_chunk);
+                            let bytes_written = bytes.len();
                             append_chunk(file, bytes).await.expect(&format!(
                                 "Failed to write {}.bin to {}",
                                 next_chunk, file_path
                             ));
                             drop(permit);
+
+                            wrt_prog.inc(bytes_written as u64);
 
                             if is_last_chunk {
                                 file_map.remove(&file_path);
@@ -823,6 +843,7 @@ async fn build_from_manifest(
         let client = client.clone();
         let product = product.clone();
         let thread_tx = tx.clone();
+        let dl_prog = dl_prog.clone();
         let dl_semaphore = dl_semaphore.clone();
 
         tokio::spawn(async move {
@@ -833,6 +854,7 @@ async fn build_from_manifest(
                 .expect(&format!("Failed to download {}.bin", &record.sha));
             drop(dl_permit);
 
+            dl_prog.inc(chunk.len() as u64);
 
             if !skip_verify {
                 let chunk_parts = &record.sha.split("_").collect::<Vec<&str>>();
