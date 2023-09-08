@@ -2,13 +2,13 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
-use crate::constants::{DEFAULT_MAX_DL_WORKERS, DEFAULT_MAX_MEMORY_USAGE};
+use crate::constants::*;
 
 /// Native cross-platform indieGala client
 #[derive(Parser, Debug)]
 #[command(
     author,
-    version,
+    version = *HELP_VERSION,
     about,
     long_about = "FreeCarnival is a native and cross-platform CLI program to install and launch IndieGala games"
 )]
