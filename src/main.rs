@@ -1,27 +1,30 @@
+use std::sync::Arc;
+
 use crate::cli::Cli;
 use crate::config::GalaConfig;
 use crate::shared::models::InstallInfo;
 use crate::{api::auth, config::InstalledConfig};
-use api::{auth::SyncResult, GalaRequest};
+use api::auth::{LoginResult, SyncResult};
+use api::GalaClient;
 use clap::Parser;
 use cli::Commands;
 use config::{CookieConfig, LibraryConfig, UserConfig};
 use constants::DEFAULT_BASE_INSTALL_PATH;
-use prelude::CookieHeaderMap;
+use reqwest_cookie_store::CookieStoreMutex;
 
 mod api;
 mod cli;
 mod config;
 mod constants;
-mod prelude;
 mod shared;
 mod utils;
 
 #[tokio::main]
 async fn main() {
     let args = Cli::parse();
-
-    let mut gala_req = GalaRequest::new();
+    let CookieConfig(cookie_store) = CookieConfig::load().expect("Failed to load cookie store");
+    let cookie_store = Arc::new(CookieStoreMutex::new(cookie_store));
+    let client = reqwest::Client::with_gala(&cookie_store);
 
     match args.command {
         Commands::Login { username, password } => {
@@ -32,16 +35,21 @@ async fn main() {
                 }
             };
 
-            match auth::login(&gala_req.client, &username, &password).await {
-                Ok(headers) => {
-                    let cookies = headers.to_cookie();
-                    gala_req.update_cookies(cookies);
-                    match auth::sync(&gala_req.client).await {
+            match auth::login(&client, &username, &password).await {
+                Ok(Some(LoginResult { message, status })) => {
+                    if status != "success" {
+                        println!("Login failed: {}", message);
+                        return;
+                    }
+
+                    match auth::sync(&client).await {
                         Ok(result) => save_user_info(&result),
                         Err(err) => println!("Failed to sync: {err:#?}"),
-                    }
+                    };
                 }
-
+                Ok(None) => {
+                    println!("Failed to parse login response");
+                }
                 Err(err) => println!("Failed to login: {err:#?}"),
             }
         }
@@ -50,7 +58,7 @@ async fn main() {
             CookieConfig::clear().expect("Error clearing cookies");
             LibraryConfig::clear().expect("Error clearing library");
         }
-        Commands::Sync => match auth::sync(&gala_req.client).await {
+        Commands::Sync => match auth::sync(&client).await {
             Ok(result) => save_user_info(&result),
             Err(err) => println!("Failed to sync: {err:#?}"),
         },
@@ -82,7 +90,7 @@ async fn main() {
                 (None, None) => DEFAULT_BASE_INSTALL_PATH.join(&slug),
             };
             match utils::install(
-                gala_req.client,
+                client.clone(),
                 &slug,
                 &install_path,
                 version,
@@ -150,8 +158,7 @@ async fn main() {
             let installed = InstalledConfig::load().expect("Failed to load installed");
             let library = LibraryConfig::load().expect("Failed to load library");
 
-            let gala_req = GalaRequest::new();
-            match utils::check_updates(&gala_req.client, library, installed).await {
+            match utils::check_updates(&client, library, installed).await {
                 Ok(available_updates) => {
                     if available_updates.is_empty() {
                         println!("No available updates");
@@ -185,9 +192,8 @@ async fn main() {
             };
             let library = LibraryConfig::load().expect("Failed to load library");
 
-            let gala_req = GalaRequest::new();
             match utils::update(
-                gala_req.client,
+                client.clone(),
                 library,
                 &slug,
                 &install_info,
@@ -239,16 +245,7 @@ async fn main() {
                 }
             };
 
-            let gala_req = GalaRequest::new();
-            match utils::launch(
-                gala_req.client,
-                product,
-                install_info,
-                wine_bin,
-                wine_prefix,
-            )
-            .await
-            {
+            match utils::launch(&client, product, install_info, wine_bin, wine_prefix).await {
                 Ok(Some(status)) => {
                     println!("Process exited with: {}", status);
                 }
@@ -305,18 +302,25 @@ async fn main() {
                 }
             }
         }
-    }
+    };
+
+    drop(client);
+    let cookie_store = Arc::try_unwrap(cookie_store).expect("Failed to unwrap cookie store");
+    let cookie_store = cookie_store
+        .into_inner()
+        .expect("Failed to unwrap CookieStoreMutex");
+    CookieConfig(cookie_store)
+        .store()
+        .expect("Failed to save cookie config");
 }
 
 fn save_user_info(data: &Option<SyncResult>) {
     if let Some(SyncResult {
         user_config,
-        cookie_config,
         library_config,
     }) = data
     {
         user_config.store().expect("Failed to save user config");
-        cookie_config.store().expect("Failed to save cookies");
         library_config
             .store()
             .expect("Failed to save library config");

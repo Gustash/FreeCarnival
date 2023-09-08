@@ -1,16 +1,19 @@
 use chrono::NaiveDateTime;
-use reqwest::header::HeaderMap;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    config::{CookieConfig, LibraryConfig, UserConfig},
+    config::{LibraryConfig, UserConfig},
     constants::BASE_URL,
-    prelude::*,
 };
+
+#[derive(Deserialize, Debug)]
+pub(crate) struct LoginResult {
+    pub(crate) status: String,
+    pub(crate) message: String,
+}
 
 pub(crate) struct SyncResult {
     pub(crate) user_config: UserConfig,
-    pub(crate) cookie_config: CookieConfig,
     pub(crate) library_config: LibraryConfig,
 }
 
@@ -101,15 +104,19 @@ pub(crate) async fn login(
     client: &reqwest::Client,
     username: &String,
     password: &String,
-) -> Result<HeaderMap, reqwest::Error> {
+) -> Result<Option<LoginResult>, reqwest::Error> {
     let params = [("usre", username), ("usrp", password)];
     let res = client
         .post(format!("{}/login_new/gcl", *BASE_URL))
         .form(&params)
         .send()
         .await?;
+    let body = res.text().await?;
 
-    Ok(res.headers().clone())
+    match serde_json::from_str::<LoginResult>(&body) {
+        Ok(login) => Ok(Some(login)),
+        Err(_) => Ok(None),
+    }
 }
 
 pub(crate) async fn sync(client: &reqwest::Client) -> Result<Option<SyncResult>, reqwest::Error> {
@@ -118,7 +125,6 @@ pub(crate) async fn sync(client: &reqwest::Client) -> Result<Option<SyncResult>,
         .send()
         .await?;
 
-    let raw_cookies = get_raw_cookies(res.headers());
     let body = res.text().await?;
 
     match serde_json::from_str::<UserInfo>(&body) {
@@ -144,9 +150,6 @@ pub(crate) async fn sync(client: &reqwest::Client) -> Result<Option<SyncResult>,
                 user_config: UserConfig {
                     user_info: Some(user_info),
                 },
-                cookie_config: CookieConfig {
-                    cookies: raw_cookies,
-                },
             }))
         }
         Err(_) => {
@@ -154,13 +157,4 @@ pub(crate) async fn sync(client: &reqwest::Client) -> Result<Option<SyncResult>,
             Ok(None)
         }
     }
-}
-
-fn get_raw_cookies(headers: &HeaderMap) -> Vec<String> {
-    headers
-        .to_cookie()
-        .iter()
-        .filter(|c| c.expires() > Some(time::now()))
-        .map(|c| c.to_string())
-        .collect::<Vec<String>>()
 }

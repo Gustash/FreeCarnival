@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use confy::ConfyError;
+use reqwest_cookie_store::CookieStore;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use crate::{
@@ -40,9 +41,7 @@ impl GalaConfig for UserConfig {
 }
 
 #[derive(Default, Debug, Serialize, Deserialize)]
-pub(crate) struct CookieConfig {
-    pub(crate) cookies: Vec<String>,
-}
+pub(crate) struct CookieConfig(pub(crate) CookieStore);
 
 impl GalaConfig for CookieConfig {
     fn config_name() -> &'static str {

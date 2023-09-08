@@ -318,7 +318,7 @@ pub(crate) async fn update(
 }
 
 pub(crate) async fn launch(
-    client: reqwest::Client,
+    client: &reqwest::Client,
     product: &Product,
     install_info: &InstallInfo,
     wine_bin: PathBuf,
