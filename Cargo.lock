@@ -292,8 +292,7 @@ dependencies = [
 [[package]]
 name = "cookie"
 version = "0.17.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7efb37c3e1ccb1ff97164ad95ac1606e8ccd35b3fa0a7d99a304c7f4a428cc24"
+source = "git+https://github.com/Gustash/cookie-rs.git#f43b31db90adbeeac2b6f7bbb9adf4f6ef0ccc03"
 dependencies = [
  "percent-encoding",
  "time",
