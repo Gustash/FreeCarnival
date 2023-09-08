@@ -3,7 +3,6 @@ use std::{
     path::PathBuf,
     process::ExitStatus,
     sync::Arc,
-    time::Duration,
 };
 
 use async_recursion::async_recursion;
@@ -745,7 +744,7 @@ async fn build_from_manifest(
     drop(file_chunk_num_map);
 
     let (tx, rx) =
-        crossbeam_channel::unbounded::<(BuildManifestChunksRecord, Bytes, OwnedSemaphorePermit)>();
+        async_channel::unbounded::<(BuildManifestChunksRecord, Bytes, OwnedSemaphorePermit)>();
 
     println!("Spawning write thread...");
     let write_handler = tokio::spawn(async move {
@@ -756,14 +755,11 @@ async fn build_from_manifest(
         let mut permit_queue = Vec::with_capacity(max_chunks_in_memory);
 
         while write_queue.size() > 0 {
-            let (record, chunk, permit) = match rx.recv_timeout(Duration::from_secs(1)) {
+            let (record, chunk, permit) = match rx.recv().await {
                 Ok(msg) => msg,
                 Err(_) => {
-                    let timeout_ms = 1;
-                    println!("Write thread timed out. Waiting {} ms", timeout_ms);
-                    // Sleep thread momentarily so other futures can continue
-                    tokio::time::sleep(Duration::from_millis(timeout_ms)).await;
-                    continue;
+                    println!("Write channel has closed");
+                    break;
                 }
             };
 
