@@ -749,10 +749,9 @@ async fn build_from_manifest(
     println!("Spawning write thread...");
     let write_handler = tokio::spawn(async move {
         println!("Write thread started.");
+
         let mut in_buffer = HashMap::new();
         let mut file_map = HashMap::new();
-        let max_chunks_in_memory = max_memory_usage / *MAX_CHUNK_SIZE;
-        let mut permit_queue = Vec::with_capacity(max_chunks_in_memory);
 
         while write_queue.size() > 0 {
             let (record, chunk, permit) = match rx.recv().await {
@@ -763,29 +762,17 @@ async fn build_from_manifest(
                 }
             };
 
-            let available_chunks =
-                max_chunks_in_memory - std::cmp::min(in_buffer.len(), max_chunks_in_memory);
-            if available_chunks >= max_download_workers {
-                // We still have space in memory for more chunks, let another download task
-                // continue
-                drop(permit);
-            } else {
-                // Memory bank is full of chunks, yummy! Hold on until more chunks are flushed to
-                // disk before spawning new download tasks so we don't get a memory stomach ache
-                permit_queue.push(permit);
-            }
-            in_buffer.insert(
-                // Some files don't have the chunk id in the sha parts, so they can have reused
-                // SHAs for chunks (e.g. DieYoungPrologue-WindowsNoEditor.pak)
-                format!("{},{}", record.id, record.sha),
-                (record.file_path.clone(), chunk),
-            );
+            // Some files don't have the chunk id in the sha parts, so they can have reused
+            // SHAs for chunks (e.g. DieYoungPrologue-WindowsNoEditor.pak)
+            let chunk_key = format!("{},{}", record.id, record.sha);
+            in_buffer.insert(chunk_key, (record.file_path.clone(), chunk, permit));
 
             loop {
                 match write_queue.peek() {
                     Ok((next_chunk, chunk_id, is_last_chunk)) => {
                         let next_chunk_key = format!("{},{}", chunk_id, next_chunk);
-                        if let Some((file_path, bytes)) = in_buffer.remove(&next_chunk_key) {
+                        if let Some((file_path, bytes, permit)) = in_buffer.remove(&next_chunk_key)
+                        {
                             if !file_map.contains_key(&file_path) {
                                 let chunk_file_path = install_path.join(&file_path);
                                 let file = open_file(&chunk_file_path)
@@ -795,28 +782,25 @@ async fn build_from_manifest(
                             }
                             let file = file_map.get_mut(&file_path).unwrap();
                             write_queue.remove().unwrap();
-                            println!("Writing {}", next_chunk);
+                            // println!("Writing {}", next_chunk);
                             append_chunk(file, bytes).await.expect(&format!(
                                 "Failed to write {}.bin to {}",
                                 next_chunk, file_path
                             ));
+                            drop(permit);
 
                             if is_last_chunk {
                                 file_map.remove(&file_path);
                             }
 
-                            // Let another download task go since we have flushed this chunk to
-                            // disk
-                            permit_queue.pop();
-
                             continue;
                         }
 
-                        println!(
-                            "Not ready to write {}: {} pending",
-                            next_chunk,
-                            in_buffer.len()
-                        );
+                        // println!(
+                        //     "Not ready to write {}: {} pending",
+                        //     next_chunk,
+                        //     in_buffer.len()
+                        // );
 
                         break;
                     }
@@ -831,31 +815,25 @@ async fn build_from_manifest(
     });
 
     println!("Downloading chunks...");
-    let semaphore = Arc::new(Semaphore::new(max_download_workers));
+    let max_chunks_in_memory = max_memory_usage / *MAX_CHUNK_SIZE;
+    let mem_semaphore = Arc::new(Semaphore::new(max_chunks_in_memory));
+    let dl_semaphore = Arc::new(Semaphore::new(max_download_workers));
     while let Ok(record) = chunk_queue.remove() {
+        let mem_permit = mem_semaphore.clone().acquire_owned().await.unwrap();
         let client = client.clone();
         let product = product.clone();
         let thread_tx = tx.clone();
-        let permit = semaphore.clone().acquire_owned().await.unwrap();
+        let dl_semaphore = dl_semaphore.clone();
 
         tokio::spawn(async move {
-            println!("Downloading {}", record.sha);
+            // println!("Downloading {}", record.sha);
+            let dl_permit = dl_semaphore.acquire().await.unwrap();
             let chunk = api::product::download_chunk(&client, &product, &record.sha)
                 .await
                 .expect(&format!("Failed to download {}.bin", &record.sha));
+            drop(dl_permit);
 
-            let chunk_parts = &record.sha.split("_").collect::<Vec<&str>>();
-            match chunk_parts.last() {
-                Some(chunk_sha) => {
-                    println!("Verifying {}", record.sha);
-                    let chunk_corrupted = !verify_chunk(&chunk, chunk_sha);
 
-                    if chunk_corrupted {
-                        println!(
-                            "{} failed verification. {} is corrupted.",
-                            &record.sha, &record.file_path
-                        );
-                        return false;
             if !skip_verify {
                 let chunk_parts = &record.sha.split("_").collect::<Vec<&str>>();
                 match chunk_parts.last() {
@@ -877,7 +855,7 @@ async fn build_from_manifest(
                 }
             }
 
-            thread_tx.send((record, chunk, permit)).unwrap();
+            thread_tx.send((record, chunk, mem_permit)).await.unwrap();
 
             true
         });
