@@ -55,8 +55,8 @@ async fn main() {
         }
         Commands::Logout => {
             UserConfig::clear().expect("Error clearing user config");
-            CookieConfig::clear().expect("Error clearing cookies");
             LibraryConfig::clear().expect("Error clearing library");
+            cookie_store.lock().unwrap().clear();
         }
         Commands::Sync => match auth::sync(&client).await {
             Ok(result) => save_user_info(&result),
