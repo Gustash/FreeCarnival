@@ -16,7 +16,6 @@ Usage: freecarnival <COMMAND>
 Commands:
   login         Authenticate with your indieGala account
   logout        Logout from your indieGala account
-  sync          Sync user info and library
   library       List your library
   install       Install a game from your library
   uninstall     Uninstalls a game
