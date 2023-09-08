@@ -17,6 +17,22 @@ pub(crate) struct Cli {
     pub(crate) command: Commands,
 }
 
+impl Cli {
+    /// Checks if a sync is needed before handling command
+    pub(crate) fn needs_sync(&self) -> bool {
+        match &self.command {
+            Commands::Login {
+                username: _,
+                password: _,
+            }
+            | Commands::Logout
+            | Commands::Uninstall { slug: _, keep: _ }
+            | Commands::Verify { slug: _ } => false,
+            _ => true,
+        }
+    }
+}
+
 #[derive(Debug, Subcommand)]
 pub(crate) enum Commands {
     /// Authenticate with your indieGala account
@@ -28,8 +44,6 @@ pub(crate) enum Commands {
     },
     /// Logout from your indieGala account
     Logout,
-    /// Sync user info and library
-    Sync,
     /// List your library
     Library,
     /// Install a game from your library

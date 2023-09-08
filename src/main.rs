@@ -26,6 +26,17 @@ async fn main() {
     let cookie_store = Arc::new(CookieStoreMutex::new(cookie_store));
     let client = reqwest::Client::with_gala(&cookie_store);
 
+    if args.needs_sync() {
+        println!("Syncing library...");
+        match api::auth::sync(&client).await {
+            Ok(result) => save_user_info(&result),
+            Err(err) => {
+                println!("Failed to sync: {err:#?}");
+                return;
+            }
+        };
+    }
+
     match args.command {
         Commands::Login { username, password } => {
             let password = match password {
@@ -58,10 +69,6 @@ async fn main() {
             LibraryConfig::clear().expect("Error clearing library");
             cookie_store.lock().unwrap().clear();
         }
-        Commands::Sync => match auth::sync(&client).await {
-            Ok(result) => save_user_info(&result),
-            Err(err) => println!("Failed to sync: {err:#?}"),
-        },
         Commands::Library => {
             let library = LibraryConfig::load().expect("Failed to load library");
             for product in library.collection {
@@ -158,7 +165,7 @@ async fn main() {
             let installed = InstalledConfig::load().expect("Failed to load installed");
             let library = LibraryConfig::load().expect("Failed to load library");
 
-            match utils::check_updates(&client, library, installed).await {
+            match utils::check_updates(library, installed).await {
                 Ok(available_updates) => {
                     if available_updates.is_empty() {
                         println!("No available updates");

@@ -29,7 +29,7 @@ use crate::{
         product::{BuildManifestChunksRecord, BuildManifestRecord},
     },
     config::{GalaConfig, InstalledConfig, LibraryConfig},
-    constants::{MAX_CHUNK_SIZE, PROJECT_NAME},
+    constants::*,
     shared::models::InstallInfo,
 };
 
@@ -56,22 +56,17 @@ pub(crate) async fn install<'a>(
         }
     };
 
-    println!(
-        "Found game. {}",
-        match &version {
-            Some(version) => format!("Installing build version {}...", version),
-            None => String::from("Fetching latest version build number..."),
-        }
-    );
     let build_version = match version {
         Some(selected) => selected,
-        None => match api::product::get_latest_build_number(&client, &product).await? {
-            Some(version) => version,
+        None => match product.get_latest_version() {
+            Some(version) => version.to_owned(),
             None => {
                 return Ok(Err("Failed to fetch latest build number. Cannot install."));
             }
         },
     };
+    println!("Found game. Installing build version {}...", build_version);
+
     println!("Fetching build manifest...");
     let build_manifest =
         api::product::get_build_manifest(&client, &product, &build_version).await?;
@@ -144,7 +139,6 @@ pub(crate) async fn uninstall(install_path: &PathBuf) -> tokio::io::Result<()> {
 }
 
 pub(crate) async fn check_updates(
-    client: &reqwest::Client,
     library: LibraryConfig,
     installed: InstalledConfig,
 ) -> tokio::io::Result<HashMap<String, String>> {
@@ -158,20 +152,16 @@ pub(crate) async fn check_updates(
                 continue;
             }
         };
-        let latest_version = match api::product::get_latest_build_number(client, product).await {
-            Ok(Some(v)) => v,
-            Ok(None) => {
+        let latest_version = match product.get_latest_version() {
+            Some(v) => v,
+            None => {
                 println!("Couldn't find the latest version of {slug}");
-                continue;
-            }
-            Err(err) => {
-                println!("Failed to fetch latest version for {slug}: {:?}", err);
                 continue;
             }
         };
 
-        if info.version != latest_version {
-            available_updates.insert(slug, latest_version);
+        if &info.version != latest_version {
+            available_updates.insert(slug, latest_version.to_owned());
         }
     }
     Ok(available_updates)
@@ -199,16 +189,10 @@ pub(crate) async fn update(
         Some(v) => v,
         None => {
             println!("Fetching latest version...");
-            match api::product::get_latest_build_number(&client, product).await {
-                Ok(Some(v)) => v,
-                Ok(None) => {
+            match product.get_latest_version() {
+                Some(v) => v.to_owned(),
+                None => {
                     return Ok((format!("Couldn't find the latest version of {slug}"), None));
-                }
-                Err(err) => {
-                    return Ok((
-                        format!("Failed to fetch latest version for {slug}: {:?}", err),
-                        None,
-                    ));
                 }
             }
         }
