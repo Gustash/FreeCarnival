@@ -4,24 +4,64 @@ on:
 
 jobs:
   release:
-    name: release ${{ matrix.target }}
-    runs-on: ubuntu-latest
+    name: release ${{ matrix.release_for }}
     strategy:
       fail-fast: false
       matrix:
-        target:
-          [
-            x86_64-pc-windows-gnu,
-            x86_64-unknown-linux-musl,
-            x86_64-apple-darwin,
-          ]
+        platform:
+          - release_for: Linux-x86_64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            bin: freecarnival
+            name: freecarnival-Linux-x86_64.tar.gz
+            extra_files: "README.md LICENSE"
+            command: build
+          - release_for: Windows-x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bin: freecarnival.exe
+            name: freecarnival-Windows-x86_64.zip
+            extra_files: "README.md LICENSE"
+            command: build
+          - release_for: macOS-x86_64
+            os: macOS-latest
+            target: x86_64-apple-darwin
+            bin: freecarnival
+            name: freecarnival-macOS-x86_64.tar.gz
+            extra_files: "README.md LICENSE"
+            command: build
+          - release_for: macOS-arm64
+            os: macOS-latest
+            target: aarch64-apple-darwin
+            bin: freecarnival
+            name: freecarnival-macOS-arm64.tar.gz
+            extra_files: "README.md LICENSE"
+            command: build
+
+    runs-on: ${{ matrix.platform.os }}
     steps:
       - uses: actions/checkout@master
-      - name: Compile and release
-        uses: rust-build/rust-build.action@v1.4.3
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build binary
+        uses: houseabsolute/actions-rust-cross@v0
         with:
-          RUSTTARGET: ${{ matrix.target }}
-          EXTRA_FILES: "README.md LICENSE"
-          TOOLCHAIN_VERSION: stable
+          command: ${{ matrix.platform.command }}
+          target: ${{ matrix.platform.target }}
+          args: "--locked --release"
+          strip: true
+      - name: Package as archive
+        shell: bash
+        run: |
+          cd target/${{ matrix.platform.target }}/release
+          if [[ "${{ matrix.platform.os }}" == "windows-latest" ]]; then
+            7z a ../../../${{ matrix.platform.name }} ${{ matrix.platform.bin }} ${{ matrix.platform.extra_files }}
+          else
+            tar czvf ../../../${{ matrix.platform.name }} ${{ matrix.platform.bin }} ${{ matrix.platform.extra_files }}
+          fi
+          cd -
+      - name: Generate SHA256
+        shell: bash
+        run: shasum -a 256 ${{ matrix.platform.name }} > ${{ matrix.platform.name }}.sha256sum
+      - name: Publish release artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          path: "${{ matrix.platform.name }}-*"
