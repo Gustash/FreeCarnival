@@ -59,11 +59,11 @@ jobs:
       - name: Generate SHA256 (Unix)
         shell: bash
         run: shasum -a 256 ${{ matrix.platform.name }} > ${{ matrix.platform.name }}.sha256sum
-        if: matrix.platform.os != "windows-latest"
+        if: matrix.platform.os != 'windows-latest'
       - name: Generate SHA256 (Windows)
         shell: pwsh
         run: CertUtil -hashfile ${{ matrix.platform.name }} SHA256 | Select-String 'CertUtil' -NotMatch > ${{ matrix.platform.name }}.sha256sum
-        if: matrix.platform.os == "windows-latest"
+        if: matrix.platform.os == 'windows-latest'
       - name: Upload archive artifact
         uses: actions/upload-artifact@v3
         with:
