@@ -38,7 +38,7 @@ async fn main() {
     }
 
     match args.command {
-        Commands::Login { username, password } => {
+        Commands::Login { email, password } => {
             let password = match password {
                 Some(password) => password,
                 None => {
@@ -46,7 +46,7 @@ async fn main() {
                 }
             };
 
-            match auth::login(&client, &username, &password).await {
+            match auth::login(&client, &email, &password).await {
                 Ok(Some(LoginResult { message, status })) => {
                     if status != "success" {
                         println!("Login failed: {}", message);

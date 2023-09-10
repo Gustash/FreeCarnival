@@ -22,7 +22,7 @@ impl Cli {
     pub(crate) fn needs_sync(&self) -> bool {
         match &self.command {
             Commands::Login {
-                username: _,
+                email: _,
                 password: _,
             }
             | Commands::Logout
@@ -37,8 +37,8 @@ impl Cli {
 pub(crate) enum Commands {
     /// Authenticate with your indieGala account
     Login {
-        /// Your indieGala username
-        username: String,
+        /// Your indieGala account email
+        email: String,
         /// Your indieGala password, can be left blank for interactive login
         password: Option<String>,
     },
@@ -48,6 +48,7 @@ pub(crate) enum Commands {
     Library,
     /// Install a game from your library
     Install {
+        /// The slug of the game e.g. syberia-ii
         slug: String,
         /// How many download workers to run at one time.
         /// Increasing this value will make downloads faster, but use more memory.
@@ -83,6 +84,7 @@ pub(crate) enum Commands {
     },
     /// Uninstalls a game
     Uninstall {
+        /// The slug of the game e.g. syberia-ii
         slug: String,
         /// Remove game from installed config but do not delete install folder.
         #[arg(long)]
@@ -92,6 +94,7 @@ pub(crate) enum Commands {
     ListUpdates,
     /// Update (or downgrade) an installed game.
     Update {
+        /// The slug of the game e.g. syberia-ii
         slug: String,
         /// How many download workers to run at one time.
         /// Increasing this value will make downloads faster, but use more memory.
@@ -123,6 +126,7 @@ pub(crate) enum Commands {
     },
     /// Launch an installed game
     Launch {
+        /// The slug of the game e.g. syberia-ii
         slug: String,
         /// The WINE prefix to use for this game
         #[arg(long)]
@@ -132,7 +136,13 @@ pub(crate) enum Commands {
         wine_bin: PathBuf,
     },
     /// Print info about game
-    Info { slug: String },
+    Info {
+        /// The slug of the game e.g. syberia-ii
+        slug: String,
+    },
     /// Verify file integrity for an installed game
-    Verify { slug: String },
+    Verify {
+        /// The slug of the game e.g. syberia-ii
+        slug: String,
+    },
 }

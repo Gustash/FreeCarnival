@@ -90,11 +90,7 @@ pub(crate) struct ProductVersion {
 
 impl std::fmt::Display for Product {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "[{}]\t{} (ID: {})",
-            self.slugged_name, self.name, self.id
-        )
+        write!(f, "[{}] {}", self.slugged_name, self.name)
     }
 }
 
