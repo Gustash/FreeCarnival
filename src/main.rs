@@ -232,7 +232,9 @@ async fn main() {
         }
         Commands::Launch {
             slug,
+            #[cfg(not(target_os = "windows"))]
             wine_bin,
+            #[cfg(not(target_os = "windows"))]
             wine_prefix,
         } => {
             let installed = InstalledConfig::load().expect("Failed to load installed");
@@ -252,7 +254,17 @@ async fn main() {
                 }
             };
 
-            match utils::launch(&client, product, install_info, wine_bin, wine_prefix).await {
+            match utils::launch(
+                &client,
+                product,
+                install_info,
+                #[cfg(not(target_os = "windows"))]
+                wine_bin,
+                #[cfg(not(target_os = "windows"))]
+                wine_prefix,
+            )
+            .await
+            {
                 Ok(Some(status)) => {
                     println!("Process exited with: {}", status);
                 }

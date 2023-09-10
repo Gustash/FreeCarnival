@@ -129,9 +129,11 @@ pub(crate) enum Commands {
         /// The slug of the game e.g. syberia-ii
         slug: String,
         /// The WINE prefix to use for this game
+        #[cfg(not(target_os = "windows"))]
         #[arg(long)]
         wine_prefix: Option<PathBuf>,
         /// The WINE bin to use for launching the game
+        #[cfg(not(target_os = "windows"))]
         #[arg(long)]
         wine_bin: PathBuf,
     },

@@ -305,8 +305,8 @@ pub(crate) async fn launch(
     client: &reqwest::Client,
     product: &Product,
     install_info: &InstallInfo,
-    wine_bin: PathBuf,
-    wine_prefix: Option<PathBuf>,
+    #[cfg(not(target_os = "windows"))] wine_bin: PathBuf,
+    #[cfg(not(target_os = "windows"))] wine_prefix: Option<PathBuf>,
 ) -> tokio::io::Result<Option<ExitStatus>> {
     let game_details = match api::product::get_game_details(&client, &product).await {
         Ok(details) => details,
@@ -346,11 +346,23 @@ pub(crate) async fn launch(
     };
     println!("{} was selected", exe);
 
-    let mut command = tokio::process::Command::new(wine_bin);
-    command.arg(exe);
+    let (binary, args) = (
+        #[cfg(target_os = "windows")]
+        exe.to_pathbuf(),
+        #[cfg(not(target_os = "windows"))]
+        wine_bin,
+        #[cfg(target_os = "windows")]
+        "".to_owned(),
+        #[cfg(not(target_os = "windows"))]
+        exe.to_string(),
+    );
+
+    let mut command = tokio::process::Command::new(binary);
+    command.arg(args);
     // TODO:
     // Handle cwd and launch args. Since I don't have games that have these I don't have a
     // reliable way to test...
+    #[cfg(not(target_os = "windows"))]
     if let Some(wine_prefix) = wine_prefix {
         command.env("WINEPREFIX", wine_prefix);
     }
