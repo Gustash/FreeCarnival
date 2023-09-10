@@ -52,25 +52,20 @@ jobs:
         shell: bash
         run: |
           if [[ "${{ matrix.platform.os }}" == "windows-latest" ]]; then
-            7z a ${{ matrix.platform.name }} target/${{ matrix.platform.target }}/release/${{ matrix.platform.bin }} ${{ matrix.platform.extra_files }}
+            7z a artifacts/${{ matrix.platform.name }} target/${{ matrix.platform.target }}/release/${{ matrix.platform.bin }} ${{ matrix.platform.extra_files }}
           else
-            tar czvf ${{ matrix.platform.name }} target/${{ matrix.platform.target }}/release/${{ matrix.platform.bin }} ${{ matrix.platform.extra_files }}
+            tar czvf artifacts/${{ matrix.platform.name }} target/${{ matrix.platform.target }}/release/${{ matrix.platform.bin }} ${{ matrix.platform.extra_files }}
           fi
       - name: Generate SHA256 (Unix)
         shell: bash
-        run: shasum -a 256 ${{ matrix.platform.name }} > ${{ matrix.platform.name }}.sha256sum
+        run: shasum -a 256 ${{ matrix.platform.name }} > artifacts/${{ matrix.platform.name }}.sha256sum
         if: matrix.platform.os != 'windows-latest'
       - name: Generate SHA256 (Windows)
         shell: pwsh
-        run: CertUtil -hashfile ${{ matrix.platform.name }} SHA256 | Select-String 'CertUtil' -NotMatch > ${{ matrix.platform.name }}.sha256sum
+        run: CertUtil -hashfile ${{ matrix.platform.name }} SHA256 | Select-String 'CertUtil' -NotMatch > artifacts/${{ matrix.platform.name }}.sha256sum
         if: matrix.platform.os == 'windows-latest'
-      - name: Upload archive artifact
-        uses: actions/upload-artifact@v3
+      - name: Upload artifacts
+        uses: shogo82148/actions-upload-release-asset@v1
         with:
-          name: ${{ matrix.platform.name }}
-          path: ${{ matrix.platform.name }}
-      - name: Upload archive SHA256
-        uses: actions/upload-artifact@v3
-        with:
-          name: ${{ matrix.platform.name }}.sha256sum
-          path: ${{ matrix.platform.name }}.sha256sum
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: artifacts/*
