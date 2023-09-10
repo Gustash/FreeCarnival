@@ -52,9 +52,9 @@ jobs:
         shell: bash
         run: |
           if [[ "${{ matrix.platform.os }}" == "windows-latest" ]]; then
-            7z a ${{ matrix.platform.name }} target/${{ matrix.platform.target }}/release/${{ matrix.platform.bin }} ${{ matrix.platform.extra_files }}
+            7z a ${{ matrix.platform.name }} ./target/${{ matrix.platform.target }}/release/${{ matrix.platform.bin }} ${{ matrix.platform.extra_files }}
           else
-            tar czvf ${{ matrix.platform.name }} target/${{ matrix.platform.target }}/release/${{ matrix.platform.bin }} ${{ matrix.platform.extra_files }}
+            tar czvf ${{ matrix.platform.name }} -C target/${{ matrix.platform.target }}/release ${{ matrix.platform.bin }} -C ../../.. ${{ matrix.platform.extra_files }}
           fi
       - name: Generate SHA256 (Unix)
         shell: bash
