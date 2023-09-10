@@ -6,7 +6,7 @@ use crate::{
     utils::ChangeTag,
 };
 
-use super::auth::Product;
+use super::auth::{Product, ProductVersion};
 
 #[derive(Debug, Serialize)]
 struct LatestBuildNumberPayload {
@@ -54,7 +54,7 @@ pub(crate) struct BuildManifestChunksRecord {
 pub(crate) async fn get_build_manifest(
     client: &reqwest::Client,
     product: &Product,
-    build_version: &String,
+    build_version: &ProductVersion,
 ) -> Result<String, reqwest::Error> {
     let res = client
         .get(format!(
@@ -62,8 +62,8 @@ pub(crate) async fn get_build_manifest(
             *CONTENT_URL,
             product.namespace,
             product.id_key_name,
-            "win", // TODO: Support other platform downloads
-            build_version,
+            build_version.os,
+            build_version.version,
         ))
         .send()
         .await?;
@@ -74,7 +74,7 @@ pub(crate) async fn get_build_manifest(
 pub(crate) async fn get_build_manifest_chunks(
     client: &reqwest::Client,
     product: &Product,
-    build_version: &String,
+    build_version: &ProductVersion,
 ) -> Result<String, reqwest::Error> {
     let res = client
         .get(format!(
@@ -82,8 +82,8 @@ pub(crate) async fn get_build_manifest_chunks(
             *CONTENT_URL,
             product.namespace,
             product.id_key_name,
-            "win", // TODO: Support other platform downloads
-            build_version,
+            build_version.os,
+            build_version.version,
         ))
         .send()
         .await?;
@@ -94,9 +94,13 @@ pub(crate) async fn get_build_manifest_chunks(
 pub(crate) async fn download_chunk(
     client: &reqwest::Client,
     product: &Product,
+    os: &String,
     chunk_sha: &String,
 ) -> Result<Bytes, reqwest::Error> {
-    let res = client.get(get_chunk_url(product, chunk_sha)).send().await?;
+    let res = client
+        .get(get_chunk_url(product, os, chunk_sha))
+        .send()
+        .await?;
     let bytes = res.bytes().await?;
     Ok(bytes)
 }
@@ -149,13 +153,9 @@ pub(crate) async fn get_game_details(
     }
 }
 
-fn get_chunk_url(product: &Product, chunk_sha: &String) -> String {
+fn get_chunk_url(product: &Product, os: &String, chunk_sha: &String) -> String {
     format!(
         "{}/DevShowCaseSourceVolume/dev_fold_{}/{}/{}/{}",
-        *CONTENT_URL,
-        product.namespace,
-        product.id_key_name,
-        "win", // TODO: Support other platform downloads
-        chunk_sha,
+        *CONTENT_URL, product.namespace, product.id_key_name, os, chunk_sha,
     )
 }

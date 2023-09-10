@@ -59,22 +59,17 @@ pub(crate) struct Product {
 }
 
 impl Product {
-    pub(crate) fn get_latest_version(&self) -> Option<&String> {
-        let latest_version: Option<&ProductVersion> =
-            self.version.iter().fold(None, |acc, version| match acc {
-                Some(v) => {
-                    if version.date > v.date {
-                        Some(version)
-                    } else {
-                        acc
-                    }
+    pub(crate) fn get_latest_version(&self) -> Option<&ProductVersion> {
+        self.version.iter().fold(None, |acc, version| match acc {
+            Some(v) => {
+                if version.date > v.date {
+                    Some(version)
+                } else {
+                    acc
                 }
-                None => Some(version),
-            });
-        match latest_version {
-            Some(v) => Some(&v.version),
-            None => None,
-        }
+            }
+            None => Some(version),
+        })
     }
 }
 

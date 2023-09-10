@@ -25,7 +25,7 @@ use tokio::{
 use crate::{
     api::{
         self,
-        auth::Product,
+        auth::{Product, ProductVersion},
         product::{BuildManifestChunksRecord, BuildManifestRecord},
     },
     config::{GalaConfig, InstalledConfig, LibraryConfig},
@@ -38,7 +38,7 @@ pub(crate) async fn install<'a>(
     client: reqwest::Client,
     slug: &String,
     install_path: &PathBuf,
-    version: Option<String>,
+    version: Option<&ProductVersion>,
     max_download_workers: usize,
     max_memory_usage: usize,
     info_only: bool,
@@ -59,7 +59,7 @@ pub(crate) async fn install<'a>(
     let build_version = match version {
         Some(selected) => selected,
         None => match product.get_latest_version() {
-            Some(version) => version.to_owned(),
+            Some(latest) => latest,
             None => {
                 return Ok(Err("Failed to fetch latest build number. Cannot install."));
             }
@@ -72,7 +72,7 @@ pub(crate) async fn install<'a>(
         api::product::get_build_manifest(&client, &product, &build_version).await?;
     store_build_manifest(
         &build_manifest,
-        &build_version,
+        &build_version.version,
         &product.slugged_name,
         "manifest",
     )
@@ -100,7 +100,7 @@ pub(crate) async fn install<'a>(
         api::product::get_build_manifest_chunks(&client, &product, &build_version).await?;
     store_build_manifest(
         &build_manifest_chunks,
-        &build_version,
+        &build_version.version,
         &product.slugged_name,
         "manifest_chunks",
     )
@@ -108,11 +108,13 @@ pub(crate) async fn install<'a>(
     .expect("Failed to save build manifest chunks");
 
     let product_arc = Arc::new(product.clone());
+    let os_arc = Arc::new(build_version.os.to_owned());
 
     println!("Installing game from manifest...");
     let result = build_from_manifest(
         client,
         product_arc,
+        os_arc,
         build_manifest.as_bytes(),
         build_manifest_chunks.as_bytes(),
         install_path.into(),
@@ -126,7 +128,7 @@ pub(crate) async fn install<'a>(
     match result {
         true => Ok(Ok((
             format!("Successfully installed {} ({})", slug, build_version),
-            Some(build_version),
+            Some(build_version.version.to_owned()),
         ))),
         false => Ok(Err(
             "Some chunks failed verification. Failed to install game.",
@@ -160,8 +162,8 @@ pub(crate) async fn check_updates(
             }
         };
 
-        if &info.version != latest_version {
-            available_updates.insert(slug, latest_version.to_owned());
+        if &info.version != &latest_version.version {
+            available_updates.insert(slug, latest_version.version.to_owned());
         }
     }
     Ok(available_updates)
@@ -170,10 +172,10 @@ pub(crate) async fn check_updates(
 // TODO: Allow downgrading
 pub(crate) async fn update(
     client: reqwest::Client,
-    library: LibraryConfig,
+    library: &LibraryConfig,
     slug: &String,
     install_info: &InstallInfo,
-    selected_version: Option<String>,
+    selected_version: Option<&ProductVersion>,
     max_download_workers: usize,
     max_memory_usage: usize,
     info_only: bool,
@@ -190,7 +192,7 @@ pub(crate) async fn update(
         None => {
             println!("Fetching latest version...");
             match product.get_latest_version() {
-                Some(v) => v.to_owned(),
+                Some(v) => v,
                 None => {
                     return Ok((format!("Couldn't find the latest version of {slug}"), None));
                 }
@@ -198,7 +200,7 @@ pub(crate) async fn update(
         }
     };
 
-    if install_info.version == version {
+    if install_info.version == version.version {
         return Ok((format!("Build {version} is already installed"), None));
     }
 
@@ -211,7 +213,7 @@ pub(crate) async fn update(
             return Ok((format!("Failed to fetch build manifest: {:?}", err), None));
         }
     };
-    store_build_manifest(&new_manifest, &version, slug, "manifest").await?;
+    store_build_manifest(&new_manifest, &version.version, slug, "manifest").await?;
     let new_manifest_chunks =
         match api::product::get_build_manifest_chunks(&client, &product, &version).await {
             Ok(m) => m,
@@ -222,14 +224,20 @@ pub(crate) async fn update(
                 ));
             }
         };
-    store_build_manifest(&new_manifest_chunks, &version, slug, "manifest_chunks").await?;
+    store_build_manifest(
+        &new_manifest_chunks,
+        &version.version,
+        slug,
+        "manifest_chunks",
+    )
+    .await?;
 
     let delta_manifest = read_or_generate_delta_manifest(
         slug,
         old_manifest.as_bytes(),
         new_manifest.as_bytes(),
         &install_info.version,
-        &version,
+        &version.version,
     )
     .await?;
     let delta_manifest_chunks = read_or_generate_delta_chunks_manifest(
@@ -237,7 +245,7 @@ pub(crate) async fn update(
         delta_manifest.as_bytes(),
         new_manifest_chunks.as_bytes(),
         &install_info.version,
-        &version,
+        &version.version,
     )
     .await?;
 
@@ -286,9 +294,11 @@ pub(crate) async fn update(
     }
 
     let product_arc = Arc::new(product.clone());
+    let version_arc = Arc::new(version.os.to_owned());
     build_from_manifest(
         client,
         product_arc,
+        version_arc,
         delta_manifest.as_bytes(),
         delta_manifest_chunks.as_bytes(),
         OsPath::from(&install_info.install_path),
@@ -298,7 +308,10 @@ pub(crate) async fn update(
     )
     .await?;
 
-    Ok((format!("Updated {slug} successfully."), Some(version)))
+    Ok((
+        format!("Updated {slug} successfully."),
+        Some(version.version.to_owned()),
+    ))
 }
 
 pub(crate) async fn launch(
@@ -676,6 +689,7 @@ async fn read_build_manifest(
 async fn build_from_manifest(
     client: reqwest::Client,
     product: Arc<Product>,
+    os: Arc<String>,
     build_manifest_bytes: &[u8],
     build_manifest_chunks_bytes: &[u8],
     install_path: OsPath,
@@ -838,6 +852,7 @@ async fn build_from_manifest(
         let mem_permit = mem_semaphore.clone().acquire_owned().await.unwrap();
         let client = client.clone();
         let product = product.clone();
+        let os = os.clone();
         let thread_tx = tx.clone();
         let dl_prog = dl_prog.clone();
         let dl_semaphore = dl_semaphore.clone();
@@ -845,7 +860,7 @@ async fn build_from_manifest(
         tokio::spawn(async move {
             // println!("Downloading {}", record.sha);
             let dl_permit = dl_semaphore.acquire().await.unwrap();
-            let chunk = api::product::download_chunk(&client, &product, &record.sha)
+            let chunk = api::product::download_chunk(&client, &product, &os, &record.sha)
                 .await
                 .expect(&format!("Failed to download {}.bin", &record.sha));
             drop(dl_permit);
@@ -860,6 +875,7 @@ async fn build_from_manifest(
                         let chunk_corrupted = !verify_chunk(&chunk, chunk_sha);
 
                         if chunk_corrupted {
+                            println!("Sha: {}", chunk_sha);
                             println!(
                                 "{} failed verification. {} is corrupted.",
                                 &record.sha, &record.file_path
