@@ -51,6 +51,7 @@ jobs:
       - name: Package as archive
         shell: bash
         run: |
+          mkdir artifacts
           if [[ "${{ matrix.platform.os }}" == "windows-latest" ]]; then
             7z a artifacts/${{ matrix.platform.name }} target/${{ matrix.platform.target }}/release/${{ matrix.platform.bin }} ${{ matrix.platform.extra_files }}
           else
