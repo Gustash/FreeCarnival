@@ -62,7 +62,7 @@ jobs:
         if: ${{ matrix.platform.os }} != "windows-latest"
       - name: Generate SHA256 (Windows)
         shell: powershell
-        run: CertUtil -hashfile .\freecarnival.exe SHA256 | Select-String 'CertUtil' -NotMatch > ${{ matrix.platform.name }}.sha256sum
+        run: CertUtil -hashfile ${{ matrix.platform.name }} SHA256 | Select-String 'CertUtil' -NotMatch > ${{ matrix.platform.name }}.sha256sum
         if: ${{ matrix.platform.os }} == "windows-latest"
       - name: Upload archive artifact
         uses: actions/upload-artifact@v3
