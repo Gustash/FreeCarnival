@@ -64,7 +64,7 @@ impl Product {
             let valid_os = match os {
                 Some(build_os) => version.os == *build_os,
                 #[cfg(target_os = "macos")]
-                None => v.os == BuildOs::Mac,
+                None => version.os == BuildOs::Mac,
                 #[cfg(not(target_os = "macos"))]
                 None => version.os == BuildOs::Windows,
             };
