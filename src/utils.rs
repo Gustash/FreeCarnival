@@ -80,10 +80,14 @@ pub(crate) async fn install<'a>(
     .expect("Failed to save build manifest");
 
     if info_only {
-        let mut build_manifest_rdr = csv::Reader::from_reader(build_manifest.as_bytes());
+        let mut build_manifest_rdr = csv::Reader::from_reader(&build_manifest[..]);
         let download_size = build_manifest_rdr
-            .deserialize::<BuildManifestRecord>()
-            .into_iter()
+            .byte_records()
+            .map(|r| {
+                let mut record = r.expect("Failed to get byte record");
+                record.push_field(b"");
+                record.deserialize::<BuildManifestRecord>(None)
+            })
             .fold(0f64, |acc, record| match record {
                 Ok(record) => acc + record.size_in_bytes as f64,
                 Err(_) => acc,
@@ -115,8 +119,8 @@ pub(crate) async fn install<'a>(
         client,
         product_arc,
         os_arc,
-        build_manifest.as_bytes(),
-        build_manifest_chunks.as_bytes(),
+        &build_manifest[..],
+        &build_manifest_chunks[..],
         install_path.into(),
         max_download_workers,
         max_memory_usage,
@@ -234,26 +238,28 @@ pub(crate) async fn update(
 
     let delta_manifest = read_or_generate_delta_manifest(
         slug,
-        old_manifest.as_bytes(),
-        new_manifest.as_bytes(),
+        &old_manifest[..],
+        &new_manifest[..],
         &install_info.version,
         &version.version,
     )
     .await?;
     let delta_manifest_chunks = read_or_generate_delta_chunks_manifest(
         slug,
-        delta_manifest.as_bytes(),
-        new_manifest_chunks.as_bytes(),
+        &delta_manifest[..],
+        &new_manifest_chunks[..],
         &install_info.version,
         &version.version,
     )
     .await?;
 
     if info_only {
-        let mut delta_build_manifest_rdr = csv::Reader::from_reader(delta_manifest.as_bytes());
+        let mut delta_build_manifest_rdr = csv::Reader::from_reader(&delta_manifest[..]);
         let download_size = delta_build_manifest_rdr
-            .deserialize::<BuildManifestRecord>()
-            .into_iter()
+            .byte_records()
+            .map(|r| {
+                r.expect("Failed to get byte record").deserialize::<BuildManifestRecord>(None)
+            })
             .fold(0f64, |acc, record| match record {
                 Ok(record) => match record.tag {
                     Some(ChangeTag::Removed) => acc,
@@ -261,19 +267,27 @@ pub(crate) async fn update(
                 },
                 Err(_) => acc,
             });
-        let mut new_build_manifest_rdr = csv::Reader::from_reader(new_manifest.as_bytes());
+        let mut new_build_manifest_rdr = csv::Reader::from_reader(&new_manifest[..]);
         let disk_size = new_build_manifest_rdr
-            .deserialize::<BuildManifestRecord>()
-            .into_iter()
+            .byte_records()
+            .map(|r| {
+                let mut record = r.expect("Failed to get byte record");
+                record.push_field(b"");
+                record.deserialize::<BuildManifestRecord>(None)
+            })
             .fold(0f64, |acc, record| match record {
                 Ok(record) => acc + record.size_in_bytes as f64,
                 Err(_) => acc,
             });
 
-        let mut old_manifest_rdr = csv::Reader::from_reader(old_manifest.as_bytes());
+        let mut old_manifest_rdr = csv::Reader::from_reader(&old_manifest[..]);
         let old_disk_size = old_manifest_rdr
-            .deserialize::<BuildManifestRecord>()
-            .into_iter()
+            .byte_records()
+            .map(|r| {
+                let mut record = r.expect("Failed to get byte record");
+                record.push_field(b"");
+                record.deserialize::<BuildManifestRecord>(None)
+            })
             .fold(0f64, |acc, record| match record {
                 Ok(record) => acc + record.size_in_bytes as f64,
                 Err(_) => acc,
@@ -299,8 +313,8 @@ pub(crate) async fn update(
         client,
         product_arc,
         version_arc,
-        delta_manifest.as_bytes(),
-        delta_manifest_chunks.as_bytes(),
+        &delta_manifest[..],
+        &delta_manifest_chunks[..],
         OsPath::from(&install_info.install_path),
         max_download_workers,
         max_memory_usage,
@@ -390,10 +404,13 @@ pub(crate) async fn verify(slug: &String, install_info: &InstallInfo) -> tokio::
     let mut handles: Vec<JoinHandle<bool>> = vec![];
 
     let build_manifest = read_build_manifest(&install_info.version, slug, "manifest").await?;
-    let mut build_manifest_rdr = csv::Reader::from_reader(build_manifest.as_bytes());
+    let mut build_manifest_rdr = csv::Reader::from_reader(&build_manifest[..]);
+    let build_manifest_byte_records = build_manifest_rdr.byte_records();
 
-    for record in build_manifest_rdr.deserialize::<BuildManifestRecord>() {
-        let record = record.expect("Failed to deserialize build manifest");
+    for record in build_manifest_byte_records {
+        let mut record = record.expect("Failed to get byte record");
+        record.push_field(b"");
+        let record = record.deserialize::<BuildManifestRecord>(None).expect("Failed to deserialize build manifest");
 
         if record.is_directory() {
             continue;
@@ -486,7 +503,7 @@ async fn read_or_generate_delta_manifest(
     new_manifest_bytes: &[u8],
     old_version: &String,
     new_version: &String,
-) -> tokio::io::Result<String> {
+) -> tokio::io::Result<Vec<u8>> {
     let manifest_delta_version = format!("{}_{}", old_version, new_version);
     if let Ok(exising_delta) =
         read_build_manifest(&manifest_delta_version, slug, "manifest_delta").await
@@ -498,15 +515,21 @@ async fn read_or_generate_delta_manifest(
     println!("Generating delta manifest...");
     let mut new_manifest_rdr = csv::Reader::from_reader(new_manifest_bytes);
     let new_manifest_iter: Vec<BuildManifestRecord> = new_manifest_rdr
-        .deserialize::<BuildManifestRecord>()
-        .into_iter()
-        .map(|r| r.expect("Failed to deserialize updated build manifest"))
+        .byte_records()
+        .map(|r| {
+            let mut record = r.expect("Failed to get byte record");
+            record.push_field(b"");
+            record.deserialize::<BuildManifestRecord>(None).expect("Failed to deserialize updated build manifest")
+        })
         .collect();
     let mut old_manifest_rdr = csv::Reader::from_reader(old_manifest_bytes);
     let old_manifest_iter: Vec<BuildManifestRecord> = old_manifest_rdr
-        .deserialize::<BuildManifestRecord>()
-        .into_iter()
-        .map(|r| r.expect("Failed to deserialize old build manifest"))
+        .byte_records()
+        .map(|r| {
+            let mut record = r.expect("Failed to get byte record");
+            record.push_field(b"");
+            record.deserialize::<BuildManifestRecord>(None).expect("Failed to deserialize old build manifest")
+        })
         .collect();
 
     let new_file_names: HashSet<&String> = new_manifest_iter
@@ -521,7 +544,6 @@ async fn read_or_generate_delta_manifest(
             .any(|entry| entry.file_name == new_entry.file_name);
 
         if added {
-            println!("{} was added", new_entry.file_name,);
             build_manifest_delta_wtr
                 .serialize(BuildManifestRecord {
                     tag: Some(ChangeTag::Added),
@@ -540,7 +562,6 @@ async fn read_or_generate_delta_manifest(
         };
 
         if modified {
-            println!("{} was modified", new_entry.file_name,);
             build_manifest_delta_wtr
                 .serialize(BuildManifestRecord {
                     tag: Some(ChangeTag::Modified),
@@ -552,7 +573,6 @@ async fn read_or_generate_delta_manifest(
 
     for old_entry in old_manifest_iter {
         if !new_file_names.contains(&old_entry.file_name) {
-            println!("{} was deleted", old_entry.file_name);
             build_manifest_delta_wtr
                 .serialize(BuildManifestRecord {
                     tag: Some(ChangeTag::Removed),
@@ -561,16 +581,16 @@ async fn read_or_generate_delta_manifest(
                 .expect("Failed to serialize delta build manifest");
         }
     }
-    let delta_str = String::from_utf8(build_manifest_delta_wtr.into_inner().unwrap()).unwrap();
+    let delta_bytes = build_manifest_delta_wtr.into_inner().unwrap();
     store_build_manifest(
-        &delta_str,
+        &delta_bytes,
         &format!("{}_{}", old_version, new_version),
         slug,
         "manifest_delta",
     )
     .await?;
 
-    Ok(delta_str)
+    Ok(delta_bytes)
 }
 
 async fn read_or_generate_delta_chunks_manifest(
@@ -579,7 +599,7 @@ async fn read_or_generate_delta_chunks_manifest(
     new_manifest_bytes: &[u8],
     old_version: &String,
     new_version: &String,
-) -> tokio::io::Result<String> {
+) -> tokio::io::Result<Vec<u8>> {
     let manifest_delta_version = format!("{}_{}", old_version, new_version);
     if let Ok(exising_delta) =
         read_build_manifest(&manifest_delta_version, slug, "manifest_delta_chunks").await
@@ -590,18 +610,22 @@ async fn read_or_generate_delta_chunks_manifest(
 
     println!("Generating chunks delta manifest...");
     let mut delta_manifest_rdr = csv::Reader::from_reader(delta_manifest_bytes);
-    let mut delta_manifest = delta_manifest_rdr.deserialize::<BuildManifestRecord>();
+    let mut delta_manifest = delta_manifest_rdr.byte_records().map(|r| {
+        let record = r.expect("Failed to get byte record");
+        record.deserialize::<BuildManifestRecord>(None)
+    });
     let mut current_file = delta_manifest
         .next()
         .expect("Failed to deserialize build manifest delta")
         .expect("There were no changes in this update?");
 
     let mut new_manifest_rdr = csv::Reader::from_reader(new_manifest_bytes);
+    let new_manifest_byte_records = new_manifest_rdr.byte_records();
     let mut build_manifest_delta_wtr = csv::Writer::from_writer(vec![]);
 
-    for record in new_manifest_rdr.deserialize::<BuildManifestChunksRecord>() {
-        let record = record.expect("Failed to deserialize build manifest chunks");
-        println!("Current record: {}", record.file_path);
+    for record in new_manifest_byte_records {
+        let record = record.expect("Failed to get byte record");
+        let record = record.deserialize::<BuildManifestChunksRecord>(None).expect("Failed to deserialize build manifest chunks");
 
         // Removed files are always last in the delta manifest, so we can break here
         if current_file.tag == Some(ChangeTag::Removed) {
@@ -622,7 +646,6 @@ async fn read_or_generate_delta_chunks_manifest(
             };
         }
 
-        println!("Current file: {}", current_file.file_name);
         if record.file_path != current_file.file_name {
             continue;
         }
@@ -632,7 +655,7 @@ async fn read_or_generate_delta_chunks_manifest(
             .expect("Failed to serialize build manifest chunks");
 
         if usize::from(record.id) + 1 == current_file.chunks {
-            println!("Done processing chunks for {}", &record.file_path);
+            println!("Done processing chunks for {}", record.file_path);
             // Move on to the next file
             current_file = match delta_manifest.next() {
                 Some(file) => file.expect("Failed to deserialize build manifest delta"),
@@ -644,20 +667,20 @@ async fn read_or_generate_delta_chunks_manifest(
         }
     }
 
-    let delta_str = String::from_utf8(build_manifest_delta_wtr.into_inner().unwrap()).unwrap();
+    let delta_bytes = build_manifest_delta_wtr.into_inner().unwrap();
     store_build_manifest(
-        &delta_str,
+        &delta_bytes,
         &format!("{}_{}", old_version, new_version),
         slug,
         "manifest_delta_chunks",
     )
     .await?;
 
-    Ok(delta_str)
+    Ok(delta_bytes)
 }
 
 async fn store_build_manifest(
-    body: &String,
+    body: &[u8],
     build_number: &String,
     product_slug: &String,
     file_suffix: &str,
@@ -675,7 +698,7 @@ async fn read_build_manifest(
     build_number: &String,
     product_slug: &String,
     file_suffix: &str,
-) -> tokio::io::Result<String> {
+) -> tokio::io::Result<Vec<u8>> {
     // TODO: Move appName to constant
     let project = ProjectDirs::from("rs", "", *PROJECT_NAME).unwrap();
     let path = project
@@ -683,7 +706,7 @@ async fn read_build_manifest(
         .join("manifests")
         .join(product_slug)
         .join(format!("{}_{}.csv", build_number, file_suffix));
-    tokio::fs::read_to_string(path).await
+    tokio::fs::read(path).await
 }
 
 async fn build_from_manifest(
@@ -710,21 +733,31 @@ async fn build_from_manifest(
 
     println!("Building folder structure...");
     let mut manifest_rdr = csv::Reader::from_reader(build_manifest_bytes);
-    for record in manifest_rdr.deserialize::<BuildManifestRecord>() {
-        let record = record.expect("Failed to deserialize build manifest");
+    let byte_records = manifest_rdr.byte_records();
+    for record in byte_records {
+        let mut record = record.expect("Failed to get byte record");
+        if let None = record.get(5) {
+            record.push_field(b"");
+        }
+        let record = record.deserialize::<BuildManifestRecord>(None).expect("Failed to deserialize build manifest");
 
         if record.tag == Some(ChangeTag::Modified) || record.tag == Some(ChangeTag::Removed) {
             let file_path = install_path.join(&record.file_name);
+            println!("Removing {}", file_path);
             if record.is_directory() {
+                println!("{} is a directory", file_path);
                 // Is a directory
-                if file_path.exists() && file_path.is_dir() {
+                if file_path.exists() && file_path.to_path().is_dir() {
+                    println!("Deleting {}", file_path);
                     // Delete this directory
                     tokio::fs::remove_dir_all(file_path).await?;
                 }
                 continue;
             }
 
+            println!("{} is a file", file_path);
             if file_path.exists() && file_path.is_file() {
+                println!("Deleting {}", file_path);
                 // Delete this file
                 tokio::fs::remove_file(file_path).await?;
             }
@@ -756,8 +789,10 @@ async fn build_from_manifest(
 
     println!("Building queue...");
     let mut manifest_chunks_rdr = csv::Reader::from_reader(build_manifest_chunks_bytes);
-    for record in manifest_chunks_rdr.deserialize::<BuildManifestChunksRecord>() {
-        let record = record.expect("Failed to deserialize chunks manifest");
+    let byte_records = manifest_chunks_rdr.byte_records();
+    for record in byte_records {
+        let record = record.expect("Failed to get byte record");
+        let record = record.deserialize::<BuildManifestChunksRecord>(None).expect("Failed to deserialize chunks manifest");
 
         let is_last = file_chunk_num_map[&record.file_path] - 1 == usize::from(record.id);
         if is_last {
@@ -792,7 +827,7 @@ async fn build_from_manifest(
             // Some files don't have the chunk id in the sha parts, so they can have reused
             // SHAs for chunks (e.g. DieYoungPrologue-WindowsNoEditor.pak)
             let chunk_key = format!("{},{}", record.id, record.sha);
-            in_buffer.insert(chunk_key, (record.file_path.clone(), chunk, permit));
+            in_buffer.insert(chunk_key, (record.file_path, chunk, permit));
 
             loop {
                 match write_queue.peek() {
