@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer, Deserializer};
 
 use crate::{
     constants::{CONTENT_URL, DEV_URL},
@@ -25,7 +25,7 @@ pub(crate) struct BuildManifestRecord {
     pub(crate) sha: String,
     #[serde(rename = "Flags")]
     pub(crate) flags: u8,
-    #[serde(rename = "File Name")]
+    #[serde(rename = "File Name", deserialize_with = "from_latin1_str", serialize_with = "to_latin1_bytes")]
     pub(crate) file_name: String,
     #[serde(rename = "Change Tag")]
     pub(crate) tag: Option<ChangeTag>,
@@ -45,17 +45,32 @@ impl BuildManifestRecord {
 pub(crate) struct BuildManifestChunksRecord {
     #[serde(rename = "ID")]
     pub(crate) id: u16,
-    #[serde(rename = "Filepath")]
+    #[serde(rename = "Filepath", deserialize_with = "from_latin1_str", serialize_with = "to_latin1_bytes")]
     pub(crate) file_path: String,
     #[serde(rename = "Chunk SHA")]
     pub(crate) sha: String,
+}
+
+fn from_latin1_str<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s: &[u8] = Deserialize::deserialize(deserializer)?;
+    Ok(s.iter().cloned().map(char::from).collect())
+}
+
+fn to_latin1_bytes<S>(string: &String, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.serialize_bytes(&string.chars().into_iter().map(|c| c as u8).collect::<Vec<u8>>()[..])
 }
 
 pub(crate) async fn get_build_manifest(
     client: &reqwest::Client,
     product: &Product,
     build_version: &String,
-) -> Result<String, reqwest::Error> {
+) -> Result<Bytes, reqwest::Error> {
     let res = client
         .get(format!(
             "{}/DevShowCaseSourceVolume/dev_fold_{}/{}/{}/{}_manifest.csv",
@@ -67,7 +82,7 @@ pub(crate) async fn get_build_manifest(
         ))
         .send()
         .await?;
-    let body = res.text().await?;
+    let body = res.bytes().await?;
     Ok(body)
 }
 
@@ -75,7 +90,7 @@ pub(crate) async fn get_build_manifest_chunks(
     client: &reqwest::Client,
     product: &Product,
     build_version: &String,
-) -> Result<String, reqwest::Error> {
+) -> Result<Bytes, reqwest::Error> {
     let res = client
         .get(format!(
             "{}/DevShowCaseSourceVolume/dev_fold_{}/{}/{}/{}_manifest_chunks.csv",
@@ -87,7 +102,7 @@ pub(crate) async fn get_build_manifest_chunks(
         ))
         .send()
         .await?;
-    let body = res.text().await?;
+    let body = res.bytes().await?;
     Ok(body)
 }
 
