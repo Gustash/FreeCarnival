@@ -820,8 +820,17 @@ struct MacAppExecutables {
     plist: Option<PathBuf>,
 }
 
+
+#[cfg(target_os = "macos")]
+#[derive(Deserialize)]
+struct BasicInfoPlist {
+    #[serde(rename = "CFBundleExecutable")]
+    bundle_executable: String,
+}
+
 #[cfg(target_os = "macos")]
 impl MacAppExecutables {
+
     fn new() -> Self {
         Self { plist: None }
     }
@@ -836,13 +845,12 @@ impl MacAppExecutables {
         match &self.plist {
             Some(plist_path) => {
                 let permissions: Permissions = PermissionsExt::from_mode(0o755); // Read/write/execute
-                let plist: apple_bundle::prelude::InfoPlist =
-                    apple_bundle::from_file(&plist_path).unwrap();
+                let plist: BasicInfoPlist = plist::from_file(&plist_path).unwrap();
                 let executable_path = plist_path
                     .parent()
                     .unwrap()
                     .join("MacOS")
-                    .join(plist.launch.bundle_executable.unwrap());
+                    .join(plist.bundle_executable);
                 tokio::fs::set_permissions(executable_path, permissions).await?;
             }
             None => {

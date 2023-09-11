@@ -34,7 +34,7 @@ sha2 = "0.10.7"
 tokio = { version = "1.31.0", features = ["full"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-apple-bundle = "0.1.4"
+plist = "1.5.0"
 
 [patch.crates-io]
 cookie = { git = "https://github.com/Gustash/cookie-rs.git" }

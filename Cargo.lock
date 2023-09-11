@@ -81,17 +81,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "apple-bundle"
-version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9a9a3a9da7ba0220d2ee5a02b6be5e0dbc73d9e9e74d8ffb5f1a7d32275e7282"
-dependencies = [
- "plist",
- "serde",
- "serde_plain",
-]
-
-[[package]]
 name = "async-channel"
 version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -548,7 +537,6 @@ dependencies = [
 name = "freecarnival"
 version = "0.1.4"
 dependencies = [
- "apple-bundle",
  "async-channel",
  "async-recursion",
  "base16ct",
@@ -564,6 +552,7 @@ dependencies = [
  "lazy_static",
  "num_cpus",
  "os_path",
+ "plist",
  "queues",
  "regex",
  "reqwest",
@@ -1530,15 +1519,6 @@ checksum = "693151e1ac27563d6dbcec9dee9fbd5da8539b20fa14ad3752b2e6d363ace360"
 dependencies = [
  "itoa",
  "ryu",
- "serde",
-]
-
-[[package]]
-name = "serde_plain"
-version = "1.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ce1fc6db65a611022b23a0dec6975d63fb80a302cb3388835ff02c097258d50"
-dependencies = [
  "serde",
 ]
 
