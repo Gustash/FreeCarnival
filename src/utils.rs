@@ -3,7 +3,6 @@ use std::{
     path::PathBuf,
     process::ExitStatus,
     sync::Arc,
-    os::unix::prelude::PermissionsExt, fs::Permissions,
 };
 
 use async_recursion::async_recursion;
@@ -811,6 +810,8 @@ impl MacAppExecutables {
     }
 
     async fn mark_as_executable(&self) -> tokio::io::Result<()> {
+        use std::{os::unix::prelude::PermissionsExt, fs::Permissions};
+
         match &self.plist {
             Some(plist_path) => {
                 let permissions: Permissions = PermissionsExt::from_mode(0o755); // Read/write/execute
