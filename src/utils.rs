@@ -25,7 +25,7 @@ use tokio::{
 use crate::{
     api::{
         self,
-        auth::{Product, ProductVersion, BuildOs},
+        auth::{BuildOs, Product, ProductVersion},
         product::{BuildManifestChunksRecord, BuildManifestRecord},
     },
     config::{GalaConfig, InstalledConfig, LibraryConfig},
@@ -43,6 +43,7 @@ pub(crate) async fn install<'a>(
     max_memory_usage: usize,
     info_only: bool,
     skip_verify: bool,
+    os: Option<BuildOs>,
 ) -> Result<Result<(String, Option<InstallInfo>), &'a str>, reqwest::Error> {
     let library = LibraryConfig::load().expect("Failed to load library");
     let product = match library
@@ -58,7 +59,7 @@ pub(crate) async fn install<'a>(
 
     let build_version = match version {
         Some(selected) => selected,
-        None => match product.get_latest_version() {
+        None => match product.get_latest_version(os.as_ref()) {
             Some(latest) => latest,
             None => {
                 return Ok(Err("Failed to fetch latest build number. Cannot install."));
@@ -131,12 +132,16 @@ pub(crate) async fn install<'a>(
 
     match result {
         true => {
-            let install_info = InstallInfo::new(install_path.to_owned(), build_version.version.to_owned(), build_version.os.to_owned());
+            let install_info = InstallInfo::new(
+                install_path.to_owned(),
+                build_version.version.to_owned(),
+                build_version.os.to_owned(),
+            );
             Ok(Ok((
                 format!("Successfully installed {} ({})", slug, build_version),
                 Some(install_info),
             )))
-        },
+        }
         false => Ok(Err(
             "Some chunks failed verification. Failed to install game.",
         )),
@@ -161,7 +166,7 @@ pub(crate) async fn check_updates(
                 continue;
             }
         };
-        let latest_version = match product.get_latest_version() {
+        let latest_version = match product.get_latest_version(Some(&info.os)) {
             Some(v) => v,
             None => {
                 println!("Couldn't find the latest version of {slug}");
@@ -197,7 +202,7 @@ pub(crate) async fn update(
         Some(v) => v,
         None => {
             println!("Fetching latest version...");
-            match product.get_latest_version() {
+            match product.get_latest_version(Some(&install_info.os)) {
                 Some(v) => v,
                 None => {
                     return Ok((format!("Couldn't find the latest version of {slug}"), None));
@@ -260,7 +265,8 @@ pub(crate) async fn update(
         let download_size = delta_build_manifest_rdr
             .byte_records()
             .map(|r| {
-                r.expect("Failed to get byte record").deserialize::<BuildManifestRecord>(None)
+                r.expect("Failed to get byte record")
+                    .deserialize::<BuildManifestRecord>(None)
             })
             .fold(0f64, |acc, record| match record {
                 Ok(record) => match record.tag {
@@ -324,11 +330,12 @@ pub(crate) async fn update(
     )
     .await?;
 
-    let install_info = InstallInfo::new(install_info.install_path.to_owned(), version.version.to_owned(), version.os.to_owned());
-    Ok((
-        format!("Updated {slug} successfully."),
-        Some(install_info),
-    ))
+    let install_info = InstallInfo::new(
+        install_info.install_path.to_owned(),
+        version.version.to_owned(),
+        version.os.to_owned(),
+    );
+    Ok((format!("Updated {slug} successfully."), Some(install_info)))
 }
 
 pub(crate) async fn launch(
@@ -342,15 +349,13 @@ pub(crate) async fn launch(
 
     #[cfg(not(target_os = "windows"))]
     let wine_bin = match os {
-        BuildOs::Windows => {
-            match wine_bin {
-                Some(wine_bin) => Some(wine_bin),
-                None => {
-                    println!("You need to set --wine-bin to run Windows games");
-                    return Ok(None);
-                }
-            }  
-        }
+        BuildOs::Windows => match wine_bin {
+            Some(wine_bin) => Some(wine_bin),
+            None => {
+                println!("You need to set --wine-bin to run Windows games");
+                return Ok(None);
+            }
+        },
         _ => None,
     };
 
@@ -402,11 +407,11 @@ pub(crate) async fn launch(
             BuildOs::Mac => {
                 println!("You can only launch macOS games on macOS");
                 return Ok(None);
-            },
+            }
             BuildOs::Linux => {
                 println!("We don't support launching Linux games yet...");
                 return Ok(None);
-            },
+            }
         },
     };
     println!("{} was selected", exe);
@@ -417,13 +422,25 @@ pub(crate) async fn launch(
         #[cfg(target_os = "windows")]
         exe.to_string(),
         #[cfg(target_os = "linux")]
-        if should_use_wine { wine_bin.unwrap().to_str().unwrap().to_owned() } else { exe.to_string() },
+        if should_use_wine {
+            wine_bin.unwrap().to_str().unwrap().to_owned()
+        } else {
+            exe.to_string()
+        },
         #[cfg(target_os = "macos")]
-        if should_use_wine { wine_bin.unwrap().to_str().unwrap().to_owned() } else { "open".to_owned() },
+        if should_use_wine {
+            wine_bin.unwrap().to_str().unwrap().to_owned()
+        } else {
+            "open".to_owned()
+        },
         #[cfg(target_os = "windows")]
         "".to_owned(),
         #[cfg(target_os = "linux")]
-        if should_use_wine { exe.to_string() } else { "".to_owned() },
+        if should_use_wine {
+            exe.to_string()
+        } else {
+            "".to_owned()
+        },
         #[cfg(target_os = "macos")]
         exe.to_string(),
     );
@@ -454,7 +471,9 @@ pub(crate) async fn verify(slug: &String, install_info: &InstallInfo) -> tokio::
     for record in build_manifest_byte_records {
         let mut record = record.expect("Failed to get byte record");
         record.push_field(b"");
-        let record = record.deserialize::<BuildManifestRecord>(None).expect("Failed to deserialize build manifest");
+        let record = record
+            .deserialize::<BuildManifestRecord>(None)
+            .expect("Failed to deserialize build manifest");
 
         if record.is_directory() {
             continue;
@@ -600,7 +619,9 @@ async fn read_or_generate_delta_manifest(
         .map(|r| {
             let mut record = r.expect("Failed to get byte record");
             record.push_field(b"");
-            record.deserialize::<BuildManifestRecord>(None).expect("Failed to deserialize updated build manifest")
+            record
+                .deserialize::<BuildManifestRecord>(None)
+                .expect("Failed to deserialize updated build manifest")
         })
         .collect();
     let mut old_manifest_rdr = csv::Reader::from_reader(old_manifest_bytes);
@@ -609,7 +630,9 @@ async fn read_or_generate_delta_manifest(
         .map(|r| {
             let mut record = r.expect("Failed to get byte record");
             record.push_field(b"");
-            record.deserialize::<BuildManifestRecord>(None).expect("Failed to deserialize old build manifest")
+            record
+                .deserialize::<BuildManifestRecord>(None)
+                .expect("Failed to deserialize old build manifest")
         })
         .collect();
 
@@ -706,7 +729,9 @@ async fn read_or_generate_delta_chunks_manifest(
 
     for record in new_manifest_byte_records {
         let record = record.expect("Failed to get byte record");
-        let record = record.deserialize::<BuildManifestChunksRecord>(None).expect("Failed to deserialize build manifest chunks");
+        let record = record
+            .deserialize::<BuildManifestChunksRecord>(None)
+            .expect("Failed to deserialize build manifest chunks");
 
         // Removed files are always last in the delta manifest, so we can break here
         if current_file.tag == Some(ChangeTag::Removed) {
@@ -798,9 +823,7 @@ struct MacAppExecutables {
 #[cfg(target_os = "macos")]
 impl MacAppExecutables {
     fn new() -> Self {
-        Self {
-            plist: None
-        }
+        Self { plist: None }
     }
 
     fn set_plist(&mut self, plist: PathBuf) {
@@ -808,15 +831,20 @@ impl MacAppExecutables {
     }
 
     async fn mark_as_executable(&self) -> tokio::io::Result<()> {
-        use std::{os::unix::prelude::PermissionsExt, fs::Permissions};
+        use std::{fs::Permissions, os::unix::prelude::PermissionsExt};
 
         match &self.plist {
             Some(plist_path) => {
                 let permissions: Permissions = PermissionsExt::from_mode(0o755); // Read/write/execute
-                let plist: apple_bundle::prelude::InfoPlist = apple_bundle::from_file(&plist_path).unwrap();
-                let executable_path = plist_path.parent().unwrap().join("MacOS").join(plist.launch.bundle_executable.unwrap());
+                let plist: apple_bundle::prelude::InfoPlist =
+                    apple_bundle::from_file(&plist_path).unwrap();
+                let executable_path = plist_path
+                    .parent()
+                    .unwrap()
+                    .join("MacOS")
+                    .join(plist.launch.bundle_executable.unwrap());
                 tokio::fs::set_permissions(executable_path, permissions).await?;
-            },
+            }
             None => {
                 println!("No executable set, cannot mark as executable.");
             }
@@ -859,7 +887,9 @@ async fn build_from_manifest(
         if let None = record.get(5) {
             record.push_field(b"");
         }
-        let record = record.deserialize::<BuildManifestRecord>(None).expect("Failed to deserialize build manifest");
+        let record = record
+            .deserialize::<BuildManifestRecord>(None)
+            .expect("Failed to deserialize build manifest");
 
         if record.tag == Some(ChangeTag::Modified) || record.tag == Some(ChangeTag::Removed) {
             let file_path = install_path.join(&record.file_name);
@@ -892,8 +922,10 @@ async fn build_from_manifest(
             &os,
             &record.file_name,
             record.is_directory(),
-            #[cfg(target_os = "macos")] &mut mac_app,
-        ).await?;
+            #[cfg(target_os = "macos")]
+            &mut mac_app,
+        )
+        .await?;
 
         if !record.is_directory() {
             file_chunk_num_map.insert(record.file_name.clone(), record.chunks);
@@ -918,7 +950,9 @@ async fn build_from_manifest(
     let byte_records = manifest_chunks_rdr.byte_records();
     for record in byte_records {
         let record = record.expect("Failed to get byte record");
-        let record = record.deserialize::<BuildManifestChunksRecord>(None).expect("Failed to deserialize chunks manifest");
+        let record = record
+            .deserialize::<BuildManifestChunksRecord>(None)
+            .expect("Failed to deserialize chunks manifest");
 
         let is_last = file_chunk_num_map[&record.file_path] - 1 == usize::from(record.id);
         if is_last {
@@ -1084,8 +1118,7 @@ async fn prepare_file(
     os: &BuildOs,
     file_name: &String,
     is_directory: bool,
-    #[cfg(target_os = "macos")]
-    mac_executable: &mut MacAppExecutables,
+    #[cfg(target_os = "macos")] mac_executable: &mut MacAppExecutables,
 ) -> tokio::io::Result<()> {
     let file_path = base_install_path.join(file_name);
 
@@ -1103,20 +1136,22 @@ async fn prepare_file(
     if os == &BuildOs::Mac && mac_executable.plist.is_none() {
         match file_path.extension() {
             Some(ext) => {
-                let is_plist = &ext == "plist" && match file_path.parent() {
-                    Some(parent) => parent.name() == Some(&String::from("Contents")) && match parent.parent() {
+                let is_plist = &ext == "plist"
+                    && match file_path.parent() {
                         Some(parent) => {
-                            parent.name().unwrap().ends_with(".app")
+                            parent.name() == Some(&String::from("Contents"))
+                                && match parent.parent() {
+                                    Some(parent) => parent.name().unwrap().ends_with(".app"),
+                                    None => false,
+                                }
                         }
                         None => false,
-                    },
-                    None => false,
-                };
+                    };
                 if is_plist {
                     mac_executable.set_plist(file_path.to_pathbuf());
                 }
             }
-            None => {},
+            None => {}
         };
     }
 

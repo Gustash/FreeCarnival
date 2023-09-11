@@ -59,16 +59,29 @@ pub(crate) struct Product {
 }
 
 impl Product {
-    pub(crate) fn get_latest_version(&self) -> Option<&ProductVersion> {
-        self.version.iter().fold(None, |acc, version| match acc {
-            Some(v) => {
-                if version.date > v.date {
-                    Some(version)
-                } else {
-                    acc
-                }
+    pub(crate) fn get_latest_version(&self, os: Option<&BuildOs>) -> Option<&ProductVersion> {
+        self.version.iter().fold(None, |acc, version| {
+            let valid_os = match os {
+                Some(build_os) => version.os == *build_os,
+                #[cfg(target_os = "macos")]
+                None => v.os == BuildOs::Mac,
+                #[cfg(not(target_os = "macos"))]
+                None => version.os == BuildOs::Windows,
+            };
+            if !valid_os {
+                return acc;
             }
-            None => Some(version),
+
+            match acc {
+                Some(v) => {
+                    if version.date > v.date {
+                        Some(version)
+                    } else {
+                        acc
+                    }
+                }
+                None => Some(version),
+            }
         })
     }
 }
@@ -101,11 +114,15 @@ impl Default for BuildOs {
 
 impl std::fmt::Display for BuildOs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", match self {
-            BuildOs::Windows => "win",
-            BuildOs::Linux => "lin",
-            BuildOs::Mac => "mac",
-        })
+        write!(
+            f,
+            "{}",
+            match self {
+                BuildOs::Windows => "win",
+                BuildOs::Linux => "lin",
+                BuildOs::Mac => "mac",
+            }
+        )
     }
 }
 

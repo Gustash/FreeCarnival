@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
-use crate::constants::*;
+use crate::{api::auth::BuildOs, constants::*};
 
 /// Native cross-platform indieGala client
 #[derive(Parser, Debug)]
@@ -81,6 +81,9 @@ pub(crate) enum Commands {
         /// corrupted/tampered files.
         #[arg(long)]
         skip_verify: bool,
+        /// The build target OS to install
+        #[arg(long)]
+        os: Option<BuildOs>,
     },
     /// Uninstalls a game
     Uninstall {
@@ -147,4 +150,33 @@ pub(crate) enum Commands {
         /// The slug of the game e.g. syberia-ii
         slug: String,
     },
+}
+
+impl ValueEnum for BuildOs {
+    fn value_variants<'a>() -> &'a [Self] {
+        &[Self::Windows, Self::Mac, Self::Linux]
+    }
+
+    fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {
+        match self {
+            Self::Windows => Some(clap::builder::PossibleValue::new("windows")),
+            Self::Mac => {
+                let possible_value = clap::builder::PossibleValue::new("mac");
+                #[cfg(not(target_os = "macos"))]
+                let possible_value = possible_value
+                    .help("You can install macOS games, but you won't be able to run them!");
+
+                Some(possible_value)
+            }
+            Self::Linux => {
+                let possible_value = clap::builder::PossibleValue::new("linux");
+                #[cfg(not(target_os = "linux"))]
+                let possible_value = possible_value.help(
+                    "You can install Linux games, but you probably won't be able to run them!",
+                );
+
+                Some(possible_value)
+            }
+        }
+    }
 }
