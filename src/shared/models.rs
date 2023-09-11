@@ -11,6 +11,7 @@ pub(crate) struct InstallInfo {
     /// Version of the game that is installed
     pub(crate) version: String,
     /// OS the build is for
+    #[serde(default)]
     pub(crate) os: BuildOs,
 }
 

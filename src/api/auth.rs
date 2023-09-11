@@ -93,6 +93,12 @@ pub(crate) enum BuildOs {
     Mac,
 }
 
+impl Default for BuildOs {
+    fn default() -> Self {
+        Self::Windows
+    }
+}
+
 impl std::fmt::Display for BuildOs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", match self {
