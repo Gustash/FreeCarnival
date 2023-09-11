@@ -353,8 +353,6 @@ pub(crate) async fn launch(
         }
         _ => None,
     };
-    if os == &BuildOs::Windows && wine_bin.is_none() {
-    }
 
     let game_details = match api::product::get_game_details(&client, &product).await {
         Ok(details) => details,
