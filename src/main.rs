@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use crate::cli::Cli;
 use crate::config::GalaConfig;
-use crate::shared::models::InstallInfo;
 use crate::{api::auth, config::InstalledConfig};
 use api::auth::{LoginResult, SyncResult};
 use api::GalaClient;
@@ -84,6 +83,7 @@ async fn main() {
             base_path,
             info,
             skip_verify,
+            os,
         } => {
             let mut installed = InstalledConfig::load().expect("Failed to load installed");
             if installed.contains_key(&slug) && !info {
@@ -103,10 +103,16 @@ async fn main() {
                 library.collection.iter().find(|p| p.slugged_name == slug),
             ) {
                 (Some(version), Some(product)) => {
-                    match product.version.iter().find(|v| v.version == version) {
+                    match product.version.iter().find(|v| {
+                        v.version == version
+                            && match &os {
+                                Some(target) => v.os == *target,
+                                None => true,
+                            }
+                    }) {
                         Some(version) => Some(version),
                         None => {
-                            println!("Couldn't find build {version} for {slug}");
+                            println!("Can't find or install build {version} for {slug}");
                             return;
                         }
                     }
@@ -126,6 +132,7 @@ async fn main() {
                 max_memory_usage,
                 info,
                 skip_verify,
+                os,
             )
             .await
             {
@@ -254,10 +261,7 @@ async fn main() {
             {
                 Ok((info, Some(install_info))) => {
                     println!("{}", info);
-                    installed.insert(
-                        slug,
-                        install_info,
-                    );
+                    installed.insert(slug, install_info);
                     installed
                         .store()
                         .expect("Failed to update installed config");
