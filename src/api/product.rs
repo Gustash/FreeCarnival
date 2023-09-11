@@ -51,6 +51,21 @@ pub(crate) struct BuildManifestChunksRecord {
     pub(crate) sha: String,
 }
 
+fn from_latin1_str<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s: &[u8] = Deserialize::deserialize(deserializer)?;
+    Ok(s.iter().cloned().map(char::from).collect())
+}
+
+fn to_latin1_bytes<S>(string: &String, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.serialize_bytes(&string.chars().into_iter().map(|c| c as u8).collect::<Vec<u8>>()[..])
+}
+
 pub(crate) async fn get_build_manifest(
     client: &reqwest::Client,
     product: &Product,
