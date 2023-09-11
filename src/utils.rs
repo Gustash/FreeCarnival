@@ -3,6 +3,7 @@ use std::{
     path::PathBuf,
     process::ExitStatus,
     sync::Arc,
+    os::unix::prelude::PermissionsExt, fs::Permissions,
 };
 
 use async_recursion::async_recursion;
@@ -25,7 +26,7 @@ use tokio::{
 use crate::{
     api::{
         self,
-        auth::{Product, ProductVersion},
+        auth::{Product, ProductVersion, BuildOs},
         product::{BuildManifestChunksRecord, BuildManifestRecord},
     },
     config::{GalaConfig, InstalledConfig, LibraryConfig},
@@ -43,7 +44,7 @@ pub(crate) async fn install<'a>(
     max_memory_usage: usize,
     info_only: bool,
     skip_verify: bool,
-) -> Result<Result<(String, Option<String>), &'a str>, reqwest::Error> {
+) -> Result<Result<(String, Option<InstallInfo>), &'a str>, reqwest::Error> {
     let library = LibraryConfig::load().expect("Failed to load library");
     let product = match library
         .collection
@@ -130,10 +131,13 @@ pub(crate) async fn install<'a>(
     .expect("Failed to build from manifest");
 
     match result {
-        true => Ok(Ok((
-            format!("Successfully installed {} ({})", slug, build_version),
-            Some(build_version.version.to_owned()),
-        ))),
+        true => {
+            let install_info = InstallInfo::new(install_path.to_owned(), build_version.version.to_owned(), build_version.os.to_owned());
+            Ok(Ok((
+                format!("Successfully installed {} ({})", slug, build_version),
+                Some(install_info),
+            )))
+        },
         false => Ok(Err(
             "Some chunks failed verification. Failed to install game.",
         )),
@@ -173,7 +177,6 @@ pub(crate) async fn check_updates(
     Ok(available_updates)
 }
 
-// TODO: Allow downgrading
 pub(crate) async fn update(
     client: reqwest::Client,
     library: &LibraryConfig,
@@ -184,7 +187,7 @@ pub(crate) async fn update(
     max_memory_usage: usize,
     info_only: bool,
     skip_verify: bool,
-) -> tokio::io::Result<(String, Option<String>)> {
+) -> tokio::io::Result<(String, Option<InstallInfo>)> {
     let product = match library.collection.iter().find(|p| &p.slugged_name == slug) {
         Some(p) => p,
         None => {
@@ -322,9 +325,10 @@ pub(crate) async fn update(
     )
     .await?;
 
+    let install_info = InstallInfo::new(install_info.install_path.to_owned(), version.version.to_owned(), version.os.to_owned());
     Ok((
         format!("Updated {slug} successfully."),
-        Some(version.version.to_owned()),
+        Some(install_info),
     ))
 }
 
@@ -332,9 +336,27 @@ pub(crate) async fn launch(
     client: &reqwest::Client,
     product: &Product,
     install_info: &InstallInfo,
-    #[cfg(not(target_os = "windows"))] wine_bin: PathBuf,
+    #[cfg(not(target_os = "windows"))] wine_bin: Option<PathBuf>,
     #[cfg(not(target_os = "windows"))] wine_prefix: Option<PathBuf>,
 ) -> tokio::io::Result<Option<ExitStatus>> {
+    let os = &install_info.os;
+
+    #[cfg(not(target_os = "windows"))]
+    let wine_bin = match os {
+        BuildOs::Windows => {
+            match wine_bin {
+                Some(wine_bin) => Some(wine_bin),
+                None => {
+                    println!("You need to set --wine-bin to run Windows games");
+                    return Ok(None);
+                }
+            }  
+        }
+        _ => None,
+    };
+    if os == &BuildOs::Windows && wine_bin.is_none() {
+    }
+
     let game_details = match api::product::get_game_details(&client, &product).await {
         Ok(details) => details,
         Err(err) => {
@@ -363,24 +385,49 @@ pub(crate) async fn launch(
     };
     let exe = match exe_path {
         Some(path) => OsPath::from(&install_info.install_path).join(path),
-        None => match find_exe_recursive(&install_info.install_path).await {
-            Some(exe) => exe,
-            None => {
-                println!("Couldn't find suitable exe...");
+        None => match os {
+            BuildOs::Windows => match find_exe_recursive(&install_info.install_path).await {
+                Some(exe) => exe,
+                None => {
+                    println!("Couldn't find suitable exe...");
+                    return Ok(None);
+                }
+            },
+            #[cfg(target_os = "macos")]
+            BuildOs::Mac => match find_app_recursive(&install_info.install_path).await {
+                Some(app) => app,
+                None => {
+                    println!("Couldn't find a suitable app...");
+                    return Ok(None);
+                }
+            },
+            #[cfg(not(target_os = "macos"))]
+            BuildOs::Mac => {
+                println!("You can only launch macOS games on macOS");
                 return Ok(None);
-            }
+            },
+            BuildOs::Linux => {
+                println!("We don't support launching Linux games yet...");
+                return Ok(None);
+            },
         },
     };
     println!("{} was selected", exe);
 
+    #[cfg(not(target_os = "windows"))]
+    let should_use_wine = os == &BuildOs::Windows;
     let (binary, args) = (
         #[cfg(target_os = "windows")]
-        exe.to_pathbuf(),
-        #[cfg(not(target_os = "windows"))]
-        wine_bin,
+        exe.to_string(),
+        #[cfg(target_os = "linux")]
+        if should_use_wine { wine_bin.unwrap().to_str().unwrap().to_owned() } else { exe.to_string() },
+        #[cfg(target_os = "macos")]
+        if should_use_wine { wine_bin.unwrap().to_str().unwrap().to_owned() } else { "open".to_owned() },
         #[cfg(target_os = "windows")]
         "".to_owned(),
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "linux")]
+        if should_use_wine { exe.to_string() } else { "".to_owned() },
+        #[cfg(target_os = "macos")]
         exe.to_string(),
     );
 
@@ -484,6 +531,43 @@ async fn find_exe_recursive(path: &PathBuf) -> Option<OsPath> {
         println!("Checking directory: {}", dir.display());
         if let Some(exe_path) = find_exe_recursive(&dir.to_path_buf()).await {
             return Some(OsPath::from(exe_path));
+        }
+    }
+
+    None
+}
+
+#[cfg(target_os = "macos")]
+#[async_recursion]
+async fn find_app_recursive(path: &PathBuf) -> Option<OsPath> {
+    let mut subdirs = vec![];
+
+    match tokio::fs::read_dir(path).await {
+        Ok(mut subpath) => {
+            while let Ok(Some(entry)) = subpath.next_entry().await {
+                let entry_path = entry.path();
+                // Check if the current path is a .app extension
+                println!("Checking file: {}", entry_path.display());
+                if let Some(ext) = entry_path.extension() {
+                    if ext == "app" {
+                        return Some(OsPath::from(entry_path));
+                    }
+                }
+
+                if entry_path.is_dir() {
+                    subdirs.push(entry_path);
+                }
+            }
+        }
+        Err(err) => {
+            println!("Failed to iterate over {}: {:?}", path.display(), err);
+        }
+    }
+
+    for dir in subdirs {
+        println!("Checking directory: {}", dir.display());
+        if let Some(app_path) = find_app_recursive(&dir.to_path_buf()).await {
+            return Some(OsPath::from(app_path));
         }
     }
 
@@ -709,10 +793,44 @@ async fn read_build_manifest(
     tokio::fs::read(path).await
 }
 
+#[cfg(target_os = "macos")]
+struct MacAppExecutables {
+    plist: Option<PathBuf>,
+}
+
+#[cfg(target_os = "macos")]
+impl MacAppExecutables {
+    fn new() -> Self {
+        Self {
+            plist: None
+        }
+    }
+
+    fn set_plist(&mut self, plist: PathBuf) {
+        self.plist = Some(plist);
+    }
+
+    async fn mark_as_executable(&self) -> tokio::io::Result<()> {
+        match &self.plist {
+            Some(plist_path) => {
+                let permissions: Permissions = PermissionsExt::from_mode(0o755); // Read/write/execute
+                let plist: apple_bundle::prelude::InfoPlist = apple_bundle::from_file(&plist_path).unwrap();
+                let executable_path = plist_path.parent().unwrap().join("MacOS").join(plist.launch.bundle_executable.unwrap());
+                tokio::fs::set_permissions(executable_path, permissions).await?;
+            },
+            None => {
+                println!("No executable set, cannot mark as executable.");
+            }
+        };
+
+        Ok(())
+    }
+}
+
 async fn build_from_manifest(
     client: reqwest::Client,
     product: Arc<Product>,
-    os: Arc<String>,
+    os: Arc<BuildOs>,
     build_manifest_bytes: &[u8],
     build_manifest_chunks_bytes: &[u8],
     install_path: OsPath,
@@ -734,6 +852,9 @@ async fn build_from_manifest(
     println!("Building folder structure...");
     let mut manifest_rdr = csv::Reader::from_reader(build_manifest_bytes);
     let byte_records = manifest_rdr.byte_records();
+    #[cfg(target_os = "macos")]
+    let mut mac_app = MacAppExecutables::new();
+
     for record in byte_records {
         let mut record = record.expect("Failed to get byte record");
         if let None = record.get(5) {
@@ -767,7 +888,13 @@ async fn build_from_manifest(
             }
         }
 
-        prepare_file(&install_path, &record.file_name, record.is_directory()).await?;
+        prepare_file(
+            &install_path,
+            &os,
+            &record.file_name,
+            record.is_directory(),
+            #[cfg(target_os = "macos")] &mut mac_app,
+        ).await?;
 
         if !record.is_directory() {
             file_chunk_num_map.insert(record.file_name.clone(), record.chunks);
@@ -933,6 +1060,11 @@ async fn build_from_manifest(
     println!("Waiting for write thread to finish...");
     write_handler.await?;
 
+    #[cfg(target_os = "macos")]
+    if *os == BuildOs::Mac {
+        mac_app.mark_as_executable().await?;
+    }
+
     // TODO: Redo logic for verification
     Ok(true)
 }
@@ -950,8 +1082,11 @@ async fn append_chunk(file: &mut tokio::fs::File, chunk: Bytes) -> tokio::io::Re
 
 async fn prepare_file(
     base_install_path: &OsPath,
+    os: &BuildOs,
     file_name: &String,
     is_directory: bool,
+    #[cfg(target_os = "macos")]
+    mac_executable: &mut MacAppExecutables,
 ) -> tokio::io::Result<()> {
     let file_path = base_install_path.join(file_name);
 
@@ -960,11 +1095,31 @@ async fn prepare_file(
         if !file_path.exists() {
             tokio::fs::create_dir(&file_path).await?;
         }
-        return Ok(());
+    } else {
+        // Create empty file.
+        tokio::fs::File::create(&file_path).await?;
     }
 
-    // Create empty file.
-    tokio::fs::File::create(&file_path).await?;
+    #[cfg(target_os = "macos")]
+    if os == &BuildOs::Mac && mac_executable.plist.is_none() {
+        match file_path.extension() {
+            Some(ext) => {
+                let is_plist = &ext == "plist" && match file_path.parent() {
+                    Some(parent) => parent.name() == Some(&String::from("Contents")) && match parent.parent() {
+                        Some(parent) => {
+                            parent.name().unwrap().ends_with(".app")
+                        }
+                        None => false,
+                    },
+                    None => false,
+                };
+                if is_plist {
+                    mac_executable.set_plist(file_path.to_pathbuf());
+                }
+            }
+            None => {},
+        };
+    }
 
     Ok(())
 }

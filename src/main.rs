@@ -129,10 +129,10 @@ async fn main() {
             )
             .await
             {
-                Ok(Ok((info, Some(installed_version)))) => {
+                Ok(Ok((info, Some(install_info)))) => {
                     println!("{}", info);
 
-                    installed.insert(slug, InstallInfo::new(install_path, installed_version));
+                    installed.insert(slug, install_info);
                     installed
                         .store()
                         .expect("Failed to update installed config");
@@ -252,11 +252,11 @@ async fn main() {
             )
             .await
             {
-                Ok((info, Some(installed_version))) => {
+                Ok((info, Some(install_info))) => {
                     println!("{}", info);
                     installed.insert(
                         slug,
-                        InstallInfo::new(install_info.install_path, installed_version),
+                        install_info,
                     );
                     installed
                         .store()

@@ -135,7 +135,7 @@ pub(crate) enum Commands {
         /// The WINE bin to use for launching the game
         #[cfg(not(target_os = "windows"))]
         #[arg(long)]
-        wine_bin: PathBuf,
+        wine_bin: Option<PathBuf>,
     },
     /// Print info about game
     Info {

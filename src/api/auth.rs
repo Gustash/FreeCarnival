@@ -78,9 +78,29 @@ pub(crate) struct ProductVersion {
     pub(crate) status: u16,
     pub(crate) enabled: u8,
     pub(crate) version: String,
-    pub(crate) os: String,
+    pub(crate) os: BuildOs,
     pub(crate) date: NaiveDateTime,
     pub(crate) text: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+pub(crate) enum BuildOs {
+    #[serde(rename = "win")]
+    Windows,
+    #[serde(rename = "lin")]
+    Linux,
+    #[serde(rename = "mac")]
+    Mac,
+}
+
+impl std::fmt::Display for BuildOs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", match self {
+            BuildOs::Windows => "win",
+            BuildOs::Linux => "lin",
+            BuildOs::Mac => "mac",
+        })
+    }
 }
 
 impl std::fmt::Display for Product {
@@ -96,11 +116,10 @@ impl std::fmt::Display for ProductVersion {
         write!(
             f,
             "Platform: {}",
-            match &self.os[..] {
-                "win" => "Windows",
-                "lin" => "Linux",
-                "mac" => "macOS",
-                os => os,
+            match self.os {
+                BuildOs::Windows => "Windows",
+                BuildOs::Linux => "Linux",
+                BuildOs::Mac => "macOS",
             }
         )?;
         if !self.text.is_empty() {

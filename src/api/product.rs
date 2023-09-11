@@ -6,7 +6,7 @@ use crate::{
     utils::ChangeTag,
 };
 
-use super::auth::{Product, ProductVersion};
+use super::auth::{Product, ProductVersion, BuildOs};
 
 #[derive(Debug, Serialize)]
 struct LatestBuildNumberPayload {
@@ -49,6 +49,21 @@ pub(crate) struct BuildManifestChunksRecord {
     pub(crate) file_path: String,
     #[serde(rename = "Chunk SHA")]
     pub(crate) sha: String,
+}
+
+fn from_latin1_str<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s: &[u8] = Deserialize::deserialize(deserializer)?;
+    Ok(s.iter().cloned().map(char::from).collect())
+}
+
+fn to_latin1_bytes<S>(string: &String, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.serialize_bytes(&string.chars().into_iter().map(|c| c as u8).collect::<Vec<u8>>()[..])
 }
 
 pub(crate) async fn get_build_manifest(
@@ -94,7 +109,7 @@ pub(crate) async fn get_build_manifest_chunks(
 pub(crate) async fn download_chunk(
     client: &reqwest::Client,
     product: &Product,
-    os: &String,
+    os: &BuildOs,
     chunk_sha: &String,
 ) -> Result<Bytes, reqwest::Error> {
     let res = client
@@ -153,7 +168,7 @@ pub(crate) async fn get_game_details(
     }
 }
 
-fn get_chunk_url(product: &Product, os: &String, chunk_sha: &String) -> String {
+fn get_chunk_url(product: &Product, os: &BuildOs, chunk_sha: &String) -> String {
     format!(
         "{}/DevShowCaseSourceVolume/dev_fold_{}/{}/{}/{}",
         *CONTENT_URL, product.namespace, product.id_key_name, os, chunk_sha,
