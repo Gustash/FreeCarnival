@@ -96,11 +96,32 @@ async fn main() {
                 (None, Some(base_path)) => base_path.join(&slug),
                 (None, None) => DEFAULT_BASE_INSTALL_PATH.join(&slug),
             };
+
+            let library = LibraryConfig::load().expect("Failed to load library");
+            let selected_version = match (
+                version,
+                library.collection.iter().find(|p| p.slugged_name == slug),
+            ) {
+                (Some(version), Some(product)) => {
+                    match product.version.iter().find(|v| v.version == version) {
+                        Some(version) => Some(version),
+                        None => {
+                            println!("Couldn't find build {version} for {slug}");
+                            return;
+                        }
+                    }
+                }
+                (_, None) => {
+                    println!("{slug} is not in your library");
+                    return;
+                }
+                _ => None,
+            };
             match utils::install(
                 client.clone(),
                 &slug,
                 &install_path,
-                version,
+                selected_version,
                 max_download_workers,
                 max_memory_usage,
                 info,
@@ -108,10 +129,10 @@ async fn main() {
             )
             .await
             {
-                Ok(Ok((info, Some(installed_version)))) => {
+                Ok(Ok((info, Some(install_info)))) => {
                     println!("{}", info);
 
-                    installed.insert(slug, InstallInfo::new(install_path, installed_version));
+                    installed.insert(slug, install_info);
                     installed
                         .store()
                         .expect("Failed to update installed config");
@@ -198,13 +219,32 @@ async fn main() {
                 }
             };
             let library = LibraryConfig::load().expect("Failed to load library");
+            let selected_version = match (
+                version,
+                library.collection.iter().find(|p| p.slugged_name == slug),
+            ) {
+                (Some(version), Some(product)) => {
+                    match product.version.iter().find(|v| v.version == version) {
+                        Some(version) => Some(version),
+                        None => {
+                            println!("Couldn't find build {version} for {slug}");
+                            return;
+                        }
+                    }
+                }
+                (_, None) => {
+                    println!("{slug} is not in your library");
+                    return;
+                }
+                _ => None,
+            };
 
             match utils::update(
                 client.clone(),
-                library,
+                &library,
                 &slug,
                 &install_info,
-                version,
+                selected_version,
                 max_download_workers,
                 max_memory_usage,
                 info,
@@ -212,11 +252,11 @@ async fn main() {
             )
             .await
             {
-                Ok((info, Some(installed_version))) => {
+                Ok((info, Some(install_info))) => {
                     println!("{}", info);
                     installed.insert(
                         slug,
-                        InstallInfo::new(install_info.install_path, installed_version),
+                        install_info,
                     );
                     installed
                         .store()

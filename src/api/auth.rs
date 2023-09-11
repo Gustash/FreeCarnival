@@ -59,22 +59,17 @@ pub(crate) struct Product {
 }
 
 impl Product {
-    pub(crate) fn get_latest_version(&self) -> Option<&String> {
-        let latest_version: Option<&ProductVersion> =
-            self.version.iter().fold(None, |acc, version| match acc {
-                Some(v) => {
-                    if version.date > v.date {
-                        Some(version)
-                    } else {
-                        acc
-                    }
+    pub(crate) fn get_latest_version(&self) -> Option<&ProductVersion> {
+        self.version.iter().fold(None, |acc, version| match acc {
+            Some(v) => {
+                if version.date > v.date {
+                    Some(version)
+                } else {
+                    acc
                 }
-                None => Some(version),
-            });
-        match latest_version {
-            Some(v) => Some(&v.version),
-            None => None,
-        }
+            }
+            None => Some(version),
+        })
     }
 }
 
@@ -83,9 +78,35 @@ pub(crate) struct ProductVersion {
     pub(crate) status: u16,
     pub(crate) enabled: u8,
     pub(crate) version: String,
-    pub(crate) os: String,
+    pub(crate) os: BuildOs,
     pub(crate) date: NaiveDateTime,
     pub(crate) text: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+pub(crate) enum BuildOs {
+    #[serde(rename = "win")]
+    Windows,
+    #[serde(rename = "lin")]
+    Linux,
+    #[serde(rename = "mac")]
+    Mac,
+}
+
+impl Default for BuildOs {
+    fn default() -> Self {
+        Self::Windows
+    }
+}
+
+impl std::fmt::Display for BuildOs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", match self {
+            BuildOs::Windows => "win",
+            BuildOs::Linux => "lin",
+            BuildOs::Mac => "mac",
+        })
+    }
 }
 
 impl std::fmt::Display for Product {
@@ -101,11 +122,10 @@ impl std::fmt::Display for ProductVersion {
         write!(
             f,
             "Platform: {}",
-            match &self.os[..] {
-                "win" => "Windows",
-                "lin" => "Linux",
-                "mac" => "macOS",
-                os => os,
+            match self.os {
+                BuildOs::Windows => "Windows",
+                BuildOs::Linux => "Linux",
+                BuildOs::Mac => "macOS",
             }
         )?;
         if !self.text.is_empty() {
