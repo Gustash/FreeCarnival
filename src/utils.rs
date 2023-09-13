@@ -386,7 +386,7 @@ pub(crate) async fn launch(
         None => None,
     };
     let exe = match exe_path {
-        Some(path) => OsPath::from(&install_info.install_path).join(path),
+        Some(path) => OsPath::from(&install_info.install_path).join(path).to_pathbuf(),
         None => match os {
             BuildOs::Windows => match find_exe_recursive(&install_info.install_path).await {
                 Some(exe) => exe,
@@ -397,7 +397,18 @@ pub(crate) async fn launch(
             },
             #[cfg(target_os = "macos")]
             BuildOs::Mac => match find_app_recursive(&install_info.install_path).await {
-                Some(app) => app,
+                Some(app) => {
+                    let plist = find_info_plist(&app);
+                    let mac_executables = MacAppExecutables::with_plist(plist);
+
+                    match mac_executables.executable() {
+                        Some(exe) => exe,
+                        None => {
+                            println!("Couldn't find executable in Info.plist...");
+                            return Ok(None);
+                        }
+                    }
+                },
                 None => {
                     println!("Couldn't find a suitable app...");
                     return Ok(None);
@@ -414,35 +425,27 @@ pub(crate) async fn launch(
             }
         },
     };
-    println!("{} was selected", exe);
+    println!("{} was selected", exe.display());
 
     #[cfg(not(target_os = "windows"))]
     let should_use_wine = os == &BuildOs::Windows;
     let (binary, args) = (
         #[cfg(target_os = "windows")]
-        exe.to_string(),
-        #[cfg(target_os = "linux")]
+        exe.to_str().unwrap().to_owned(),
+        #[cfg(not(target_os = "windows"))]
         if should_use_wine {
             wine_bin.unwrap().to_str().unwrap().to_owned()
         } else {
-            exe.to_string()
-        },
-        #[cfg(target_os = "macos")]
-        if should_use_wine {
-            wine_bin.unwrap().to_str().unwrap().to_owned()
-        } else {
-            "open".to_owned()
+            exe.to_str().unwrap().to_owned()
         },
         #[cfg(target_os = "windows")]
         "".to_owned(),
-        #[cfg(target_os = "linux")]
+        #[cfg(not(target_os = "windows"))]
         if should_use_wine {
-            exe.to_string()
+            exe.to_str().unwrap().to_owned()
         } else {
             "".to_owned()
-        },
-        #[cfg(target_os = "macos")]
-        exe.to_string(),
+        }
     );
 
     let mut command = tokio::process::Command::new(binary);
@@ -509,13 +512,19 @@ pub(crate) async fn verify(slug: &String, install_info: &InstallInfo) -> tokio::
 }
 
 #[async_recursion]
-async fn find_exe_recursive(path: &PathBuf) -> Option<OsPath> {
+async fn find_exe_recursive(path: &PathBuf) -> Option<PathBuf> {
     let mut subdirs = vec![];
+    let mut exes = vec![];
 
     match tokio::fs::read_dir(path).await {
         Ok(mut subpath) => {
             while let Ok(Some(entry)) = subpath.next_entry().await {
                 let entry_path = entry.path();
+                if entry_path.is_dir() {
+                    subdirs.push(entry_path);
+                    continue;
+                }
+
                 if entry_path.is_file() {
                     // Check if the current path is a file with a .exe extension
                     println!("Checking file: {}", entry_path.display());
@@ -530,11 +539,9 @@ async fn find_exe_recursive(path: &PathBuf) -> Option<OsPath> {
                             && !file_name_str.contains("setup")
                             && !file_name_str.contains("unins")
                         {
-                            return Some(OsPath::from(entry_path));
+                            exes.push(entry_path);
                         }
                     }
-                } else if entry_path.is_dir() {
-                    subdirs.push(entry_path);
                 }
             }
         }
@@ -543,10 +550,15 @@ async fn find_exe_recursive(path: &PathBuf) -> Option<OsPath> {
         }
     }
 
+    if exes.len() > 0 {
+        exes.sort();
+        return Some(exes.swap_remove(0));
+    }
+
     for dir in subdirs {
         println!("Checking directory: {}", dir.display());
         if let Some(exe_path) = find_exe_recursive(&dir.to_path_buf()).await {
-            return Some(OsPath::from(exe_path));
+            return Some(exe_path);
         }
     }
 
@@ -555,7 +567,7 @@ async fn find_exe_recursive(path: &PathBuf) -> Option<OsPath> {
 
 #[cfg(target_os = "macos")]
 #[async_recursion]
-async fn find_app_recursive(path: &PathBuf) -> Option<OsPath> {
+async fn find_app_recursive(path: &PathBuf) -> Option<PathBuf> {
     let mut subdirs = vec![];
 
     match tokio::fs::read_dir(path).await {
@@ -566,7 +578,7 @@ async fn find_app_recursive(path: &PathBuf) -> Option<OsPath> {
                 println!("Checking file: {}", entry_path.display());
                 if let Some(ext) = entry_path.extension() {
                     if ext == "app" {
-                        return Some(OsPath::from(entry_path));
+                        return Some(entry_path);
                     }
                 }
 
@@ -583,7 +595,7 @@ async fn find_app_recursive(path: &PathBuf) -> Option<OsPath> {
     for dir in subdirs {
         println!("Checking directory: {}", dir.display());
         if let Some(app_path) = find_app_recursive(&dir.to_path_buf()).await {
-            return Some(OsPath::from(app_path));
+            return Some(app_path);
         }
     }
 
@@ -835,22 +847,36 @@ impl MacAppExecutables {
         Self { plist: None }
     }
 
+    fn with_plist(plist: PathBuf) -> Self {
+        Self { plist: Some(plist) }
+    }
+
     fn set_plist(&mut self, plist: PathBuf) {
         self.plist = Some(plist);
     }
 
-    async fn mark_as_executable(&self) -> tokio::io::Result<()> {
-        use std::{fs::Permissions, os::unix::prelude::PermissionsExt};
-
+    fn executable(&self) -> Option<PathBuf> {
         match &self.plist {
             Some(plist_path) => {
-                let permissions: Permissions = PermissionsExt::from_mode(0o755); // Read/write/execute
                 let plist: BasicInfoPlist = plist::from_file(&plist_path).unwrap();
                 let executable_path = plist_path
                     .parent()
                     .unwrap()
                     .join("MacOS")
                     .join(plist.bundle_executable);
+
+                Some(executable_path)
+            }
+            None => None,
+        }
+    }
+
+    async fn mark_as_executable(&self) -> tokio::io::Result<()> {
+        use std::{fs::Permissions, os::unix::prelude::PermissionsExt};
+
+        match &self.executable() {
+            Some(executable_path) => {
+                let permissions: Permissions = PermissionsExt::from_mode(0o755); // Read/write/execute
                 tokio::fs::set_permissions(executable_path, permissions).await?;
             }
             None => {
@@ -859,7 +885,7 @@ impl MacAppExecutables {
         };
 
         Ok(())
-    }
+    } 
 }
 
 async fn build_from_manifest(
@@ -1144,19 +1170,9 @@ async fn prepare_file(
     if os == &BuildOs::Mac && mac_executable.plist.is_none() {
         match file_path.extension() {
             Some(ext) => {
-                let is_plist = &ext == "plist"
-                    && match file_path.parent() {
-                        Some(parent) => {
-                            parent.name() == Some(&String::from("Contents"))
-                                && match parent.parent() {
-                                    Some(parent) => parent.name().unwrap().ends_with(".app"),
-                                    None => false,
-                                }
-                        }
-                        None => false,
-                    };
-                if is_plist {
-                    mac_executable.set_plist(file_path.to_pathbuf());
+                if &ext == "app" {
+                    let plist = find_info_plist(&file_path.to_pathbuf());
+                    mac_executable.set_plist(plist);
                 }
             }
             None => {}
@@ -1164,6 +1180,11 @@ async fn prepare_file(
     }
 
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn find_info_plist(app_path: &PathBuf) -> PathBuf {
+    app_path.join("Contents").join("Info.plist")
 }
 
 fn verify_file_hash(file_path: &OsPath, sha: &str) -> std::io::Result<bool> {
