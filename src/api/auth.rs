@@ -134,9 +134,9 @@ impl std::fmt::Display for Product {
 
 impl std::fmt::Display for ProductVersion {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "[{}]\n", self.version)?;
-        write!(f, "Build Date: {}\n", self.date)?;
-        write!(
+        writeln!(f, "[{}]", self.version)?;
+        writeln!(f, "Build Date: {}", self.date)?;
+        writeln!(
             f,
             "Platform: {}",
             match self.os {
@@ -146,7 +146,7 @@ impl std::fmt::Display for ProductVersion {
             }
         )?;
         if !self.text.is_empty() {
-            write!(f, "\nAbout:\n\n{}", self.text)?;
+            writeln!(f, "About:\n\n{}", self.text)?;
         }
 
         Ok(())
