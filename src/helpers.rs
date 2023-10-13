@@ -81,43 +81,6 @@ pub(crate) async fn find_exe_recursive(path: &PathBuf) -> Option<PathBuf> {
     None
 }
 
-#[cfg(target_os = "macos")]
-#[async_recursion]
-pub(crate) async fn find_app_recursive(path: &PathBuf) -> Option<PathBuf> {
-    let mut subdirs = vec![];
-
-    match tokio::fs::read_dir(path).await {
-        Ok(mut subpath) => {
-            while let Ok(Some(entry)) = subpath.next_entry().await {
-                let entry_path = entry.path();
-                // Check if the current path is a .app extension
-                println!("Checking file: {}", entry_path.display());
-                if let Some(ext) = entry_path.extension() {
-                    if ext == "app" {
-                        return Some(entry_path);
-                    }
-                }
-
-                if entry_path.is_dir() {
-                    subdirs.push(entry_path);
-                }
-            }
-        }
-        Err(err) => {
-            println!("Failed to iterate over {}: {:?}", path.display(), err);
-        }
-    }
-
-    for dir in subdirs {
-        println!("Checking directory: {}", dir.display());
-        if let Some(app_path) = find_app_recursive(&dir.to_path_buf()).await {
-            return Some(app_path);
-        }
-    }
-
-    None
-}
-
 pub(crate) async fn read_or_generate_delta_manifest(
     slug: &String,
     old_manifest_bytes: &[u8],
@@ -334,65 +297,6 @@ pub(crate) async fn read_build_manifest(
     tokio::fs::read(path).await
 }
 
-#[cfg(target_os = "macos")]
-struct MacAppExecutables {
-    plist: Option<PathBuf>,
-}
-
-#[cfg(target_os = "macos")]
-#[derive(Deserialize)]
-struct BasicInfoPlist {
-    #[serde(rename = "CFBundleExecutable")]
-    bundle_executable: String,
-}
-
-#[cfg(target_os = "macos")]
-impl MacAppExecutables {
-    fn new() -> Self {
-        Self { plist: None }
-    }
-
-    fn with_plist(plist: PathBuf) -> Self {
-        Self { plist: Some(plist) }
-    }
-
-    fn set_plist(&mut self, plist: PathBuf) {
-        self.plist = Some(plist);
-    }
-
-    fn executable(&self) -> Option<PathBuf> {
-        match &self.plist {
-            Some(plist_path) => {
-                let plist: BasicInfoPlist = plist::from_file(&plist_path).unwrap();
-                let executable_path = plist_path
-                    .parent()
-                    .unwrap()
-                    .join("MacOS")
-                    .join(plist.bundle_executable);
-
-                Some(executable_path)
-            }
-            None => None,
-        }
-    }
-
-    async fn mark_as_executable(&self) -> tokio::io::Result<()> {
-        use std::{fs::Permissions, os::unix::prelude::PermissionsExt};
-
-        match &self.executable() {
-            Some(executable_path) => {
-                let permissions: Permissions = PermissionsExt::from_mode(0o755); // Read/write/execute
-                tokio::fs::set_permissions(executable_path, permissions).await?;
-            }
-            None => {
-                println!("No executable set, cannot mark as executable.");
-            }
-        };
-
-        Ok(())
-    }
-}
-
 pub(crate) async fn build_from_manifest(
     client: reqwest::Client,
     product: Arc<Product>,
@@ -417,7 +321,7 @@ pub(crate) async fn build_from_manifest(
     let mut manifest_rdr = csv::Reader::from_reader(build_manifest_bytes);
     let byte_records = manifest_rdr.byte_records();
     #[cfg(target_os = "macos")]
-    let mut mac_app = MacAppExecutables::new();
+    let mut mac_app = mac::MacAppExecutables::new();
 
     for record in byte_records {
         let mut record = record.expect("Failed to get byte record");
@@ -657,7 +561,7 @@ pub(crate) async fn prepare_file(
     os: &BuildOs,
     file_name: &String,
     is_directory: bool,
-    #[cfg(target_os = "macos")] mac_executable: &mut MacAppExecutables,
+    #[cfg(target_os = "macos")] mac_executable: &mut mac::MacAppExecutables,
 ) -> tokio::io::Result<()> {
     let file_path = base_install_path.join(file_name);
 
@@ -673,23 +577,15 @@ pub(crate) async fn prepare_file(
 
     #[cfg(target_os = "macos")]
     if os == &BuildOs::Mac && mac_executable.plist.is_none() {
-        match file_path.extension() {
-            Some(ext) => {
-                if &ext == "app" {
-                    let plist = find_info_plist(&file_path.to_pathbuf());
-                    mac_executable.set_plist(plist);
-                }
+        if let Some(ext) = file_path.extension() {
+            if &ext == "app" {
+                let plist = mac::find_info_plist(&file_path.to_pathbuf());
+                mac_executable.set_plist(plist);
             }
-            None => {}
         };
     }
 
     Ok(())
-}
-
-#[cfg(target_os = "macos")]
-pub(crate) fn find_info_plist(app_path: &PathBuf) -> PathBuf {
-    app_path.join("Contents").join("Info.plist")
 }
 
 pub(crate) fn verify_file_hash(file_path: &OsPath, sha: &str) -> std::io::Result<bool> {
@@ -709,4 +605,108 @@ pub(crate) fn verify_chunk(chunk: &Bytes, sha: &str) -> bool {
     let sha_str = base16ct::lower::encode_string(&hash);
 
     sha_str == sha
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) mod mac {
+    use std::path::{Path, PathBuf};
+
+    use async_recursion::async_recursion;
+    use serde::Deserialize;
+
+    #[async_recursion]
+    pub(crate) async fn find_app_recursive(path: &PathBuf) -> Option<PathBuf> {
+        let mut subdirs = vec![];
+
+        match tokio::fs::read_dir(path).await {
+            Ok(mut subpath) => {
+                while let Ok(Some(entry)) = subpath.next_entry().await {
+                    let entry_path = entry.path();
+                    // Check if the current path is a .app extension
+                    println!("Checking file: {}", entry_path.display());
+                    if let Some(ext) = entry_path.extension() {
+                        if ext == "app" {
+                            return Some(entry_path);
+                        }
+                    }
+
+                    if entry_path.is_dir() {
+                        subdirs.push(entry_path);
+                    }
+                }
+            }
+            Err(err) => {
+                println!("Failed to iterate over {}: {:?}", path.display(), err);
+            }
+        }
+
+        for dir in subdirs {
+            println!("Checking directory: {}", dir.display());
+            if let Some(app_path) = find_app_recursive(&dir.to_path_buf()).await {
+                return Some(app_path);
+            }
+        }
+
+        None
+    }
+
+    pub(crate) struct MacAppExecutables {
+        pub(crate) plist: Option<PathBuf>,
+    }
+
+    #[derive(Deserialize)]
+    struct BasicInfoPlist {
+        #[serde(rename = "CFBundleExecutable")]
+        bundle_executable: String,
+    }
+
+    impl MacAppExecutables {
+        pub(crate) fn new() -> Self {
+            Self { plist: None }
+        }
+
+        pub(crate) fn with_plist(plist: PathBuf) -> Self {
+            Self { plist: Some(plist) }
+        }
+
+        pub(crate) fn set_plist(&mut self, plist: PathBuf) {
+            self.plist = Some(plist);
+        }
+
+        pub(crate) fn executable(&self) -> Option<PathBuf> {
+            match &self.plist {
+                Some(plist_path) => {
+                    let plist: BasicInfoPlist = plist::from_file(plist_path).unwrap();
+                    let executable_path = plist_path
+                        .parent()
+                        .unwrap()
+                        .join("MacOS")
+                        .join(plist.bundle_executable);
+
+                    Some(executable_path)
+                }
+                None => None,
+            }
+        }
+
+        pub(crate) async fn mark_as_executable(&self) -> tokio::io::Result<()> {
+            use std::{fs::Permissions, os::unix::prelude::PermissionsExt};
+
+            match &self.executable() {
+                Some(executable_path) => {
+                    let permissions: Permissions = PermissionsExt::from_mode(0o755); // Read/write/execute
+                    tokio::fs::set_permissions(executable_path, permissions).await?;
+                }
+                None => {
+                    println!("No executable set, cannot mark as executable.");
+                }
+            };
+
+            Ok(())
+        }
+    }
+
+    pub(crate) fn find_info_plist(app_path: &Path) -> PathBuf {
+        app_path.join("Contents").join("Info.plist")
+    }
 }

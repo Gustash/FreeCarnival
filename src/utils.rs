@@ -5,6 +5,8 @@ use os_path::OsPath;
 use regex::Regex;
 use tokio::task::JoinHandle;
 
+#[cfg(target_os = "macos")]
+use crate::helpers::mac::{find_app_recursive, find_info_plist, MacAppExecutables};
 use crate::{
     api,
     cli::InstallOpts,
