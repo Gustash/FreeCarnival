@@ -57,5 +57,5 @@ $ cargo run -- ARGS
 - [ ] Better download fail handling
 - [ ] Pause/Resume download
 - [x] Windows support
-- [ ] Code Refactoring
+- [x] Code Refactoring
 - [ ] Better error handling

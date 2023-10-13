@@ -312,7 +312,6 @@ pub(crate) async fn store_build_manifest(
     product_slug: &String,
     file_suffix: &str,
 ) -> tokio::io::Result<()> {
-    // TODO: Move appName to constant
     let project = ProjectDirs::from("rs", "", *PROJECT_NAME).unwrap();
     let path = project.config_dir().join("manifests").join(product_slug);
     tokio::fs::create_dir_all(&path).await?;
@@ -326,7 +325,6 @@ pub(crate) async fn read_build_manifest(
     product_slug: &String,
     file_suffix: &str,
 ) -> tokio::io::Result<Vec<u8>> {
-    // TODO: Move appName to constant
     let project = ProjectDirs::from("rs", "", *PROJECT_NAME).unwrap();
     let path = project
         .config_dir()
