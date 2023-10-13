@@ -20,16 +20,15 @@ pub(crate) struct Cli {
 impl Cli {
     /// Checks if a sync is needed before handling command
     pub(crate) fn needs_sync(&self) -> bool {
-        match &self.command {
+        !matches!(
+            &self.command,
             Commands::Login {
                 email: _,
                 password: _,
-            }
-            | Commands::Logout
-            | Commands::Uninstall { slug: _, keep: _ }
-            | Commands::Verify { slug: _ } => false,
-            _ => true,
-        }
+            } | Commands::Logout
+                | Commands::Uninstall { slug: _, keep: _ }
+                | Commands::Verify { slug: _ }
+        )
     }
 }
 

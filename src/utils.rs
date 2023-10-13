@@ -46,11 +46,7 @@ pub(crate) async fn install<'a>(
     os: Option<BuildOs>,
 ) -> Result<Result<(String, Option<InstallInfo>), &'a str>, reqwest::Error> {
     let library = LibraryConfig::load().expect("Failed to load library");
-    let product = match library
-        .collection
-        .iter()
-        .find(|p| p.slugged_name == slug.to_owned())
-    {
+    let product = match library.collection.iter().find(|p| p.slugged_name == *slug) {
         Some(product) => product,
         None => {
             return Ok(Err("Could not find game in library"));
@@ -69,8 +65,7 @@ pub(crate) async fn install<'a>(
     println!("Found game. Installing build version {}...", build_version);
 
     println!("Fetching build manifest...");
-    let build_manifest =
-        api::product::get_build_manifest(&client, &product, &build_version).await?;
+    let build_manifest = api::product::get_build_manifest(&client, product, build_version).await?;
     store_build_manifest(
         &build_manifest,
         &build_version.version,
@@ -102,7 +97,7 @@ pub(crate) async fn install<'a>(
 
     println!("Fetching build manifest chunks...");
     let build_manifest_chunks =
-        api::product::get_build_manifest_chunks(&client, &product, &build_version).await?;
+        api::product::get_build_manifest_chunks(&client, product, build_version).await?;
     store_build_manifest(
         &build_manifest_chunks,
         &build_version.version,
@@ -174,7 +169,7 @@ pub(crate) async fn check_updates(
             }
         };
 
-        if &info.version != &latest_version.version {
+        if info.version != latest_version.version {
             available_updates.insert(slug, latest_version.version.to_owned());
         }
     }
@@ -218,7 +213,7 @@ pub(crate) async fn update(
     let old_manifest = read_build_manifest(&install_info.version, slug, "manifest").await?;
 
     println!("Fetching {} build manifest...", version);
-    let new_manifest = match api::product::get_build_manifest(&client, &product, &version).await {
+    let new_manifest = match api::product::get_build_manifest(&client, product, version).await {
         Ok(m) => m,
         Err(err) => {
             return Ok((format!("Failed to fetch build manifest: {:?}", err), None));
@@ -226,7 +221,7 @@ pub(crate) async fn update(
     };
     store_build_manifest(&new_manifest, &version.version, slug, "manifest").await?;
     let new_manifest_chunks =
-        match api::product::get_build_manifest_chunks(&client, &product, &version).await {
+        match api::product::get_build_manifest_chunks(&client, product, version).await {
             Ok(m) => m,
             Err(err) => {
                 return Ok((
@@ -359,7 +354,7 @@ pub(crate) async fn launch(
         _ => None,
     };
 
-    let game_details = match api::product::get_game_details(&client, &product).await {
+    let game_details = match api::product::get_game_details(client, product).await {
         Ok(details) => details,
         Err(err) => {
             println!("Failed to fetch game details. Launch might fail: {:?}", err);
@@ -386,7 +381,9 @@ pub(crate) async fn launch(
         None => None,
     };
     let exe = match exe_path {
-        Some(path) => OsPath::from(&install_info.install_path).join(path).to_pathbuf(),
+        Some(path) => OsPath::from(&install_info.install_path)
+            .join(path)
+            .to_pathbuf(),
         None => match os {
             BuildOs::Windows => match find_exe_recursive(&install_info.install_path).await {
                 Some(exe) => exe,
@@ -408,7 +405,7 @@ pub(crate) async fn launch(
                             return Ok(None);
                         }
                     }
-                },
+                }
                 None => {
                     println!("Couldn't find a suitable app...");
                     return Ok(None);
@@ -445,7 +442,7 @@ pub(crate) async fn launch(
             exe.to_str().unwrap().to_owned()
         } else {
             "".to_owned()
-        }
+        },
     );
 
     let mut command = tokio::process::Command::new(binary);
@@ -531,10 +528,10 @@ async fn find_exe_recursive(path: &PathBuf) -> Option<PathBuf> {
                     if let (Some(ext), Some(file_name)) =
                         (entry_path.extension(), entry_path.file_name())
                     {
-                        let file_name_str = String::from(match file_name.to_str() {
+                        let file_name_str = match file_name.to_str() {
                             Some(str) => str.to_lowercase(),
                             None => String::new(),
-                        });
+                        };
                         if ext == "exe"
                             && !file_name_str.contains("setup")
                             && !file_name_str.contains("unins")
@@ -550,7 +547,7 @@ async fn find_exe_recursive(path: &PathBuf) -> Option<PathBuf> {
         }
     }
 
-    if exes.len() > 0 {
+    if !exes.is_empty() {
         exes.sort();
         return Some(exes.swap_remove(0));
     }
@@ -832,7 +829,6 @@ struct MacAppExecutables {
     plist: Option<PathBuf>,
 }
 
-
 #[cfg(target_os = "macos")]
 #[derive(Deserialize)]
 struct BasicInfoPlist {
@@ -842,7 +838,6 @@ struct BasicInfoPlist {
 
 #[cfg(target_os = "macos")]
 impl MacAppExecutables {
-
     fn new() -> Self {
         Self { plist: None }
     }
@@ -885,7 +880,7 @@ impl MacAppExecutables {
         };
 
         Ok(())
-    } 
+    }
 }
 
 async fn build_from_manifest(
@@ -918,7 +913,7 @@ async fn build_from_manifest(
 
     for record in byte_records {
         let mut record = record.expect("Failed to get byte record");
-        if let None = record.get(5) {
+        if record.get(5).is_none() {
             record.push_field(b"");
         }
         let record = record
@@ -1031,19 +1026,18 @@ async fn build_from_manifest(
                         {
                             if !file_map.contains_key(&file_path) {
                                 let chunk_file_path = install_path.join(&file_path);
-                                let file = open_file(&chunk_file_path)
-                                    .await
-                                    .expect(&format!("Failed to open {}", chunk_file_path));
+                                let file = open_file(&chunk_file_path).await.unwrap_or_else(|_| {
+                                    panic!("Failed to open {}", chunk_file_path)
+                                });
                                 file_map.insert(file_path.clone(), file);
                             }
                             let file = file_map.get_mut(&file_path).unwrap();
                             write_queue.remove().unwrap();
                             // println!("Writing {}", next_chunk);
                             let bytes_written = bytes.len();
-                            append_chunk(file, bytes).await.expect(&format!(
-                                "Failed to write {}.bin to {}",
-                                next_chunk, file_path
-                            ));
+                            append_chunk(file, bytes).await.unwrap_or_else(|_| {
+                                panic!("Failed to write {}.bin to {}", next_chunk, file_path)
+                            });
                             drop(permit);
 
                             wrt_prog.inc(bytes_written as u64);
@@ -1091,13 +1085,13 @@ async fn build_from_manifest(
             let dl_permit = dl_semaphore.acquire().await.unwrap();
             let chunk = api::product::download_chunk(&client, &product, &os, &record.sha)
                 .await
-                .expect(&format!("Failed to download {}.bin", &record.sha));
+                .unwrap_or_else(|_| panic!("Failed to download {}.bin", &record.sha));
             drop(dl_permit);
 
             dl_prog.inc(chunk.len() as u64);
 
             if !skip_verify {
-                let chunk_parts = &record.sha.split("_").collect::<Vec<&str>>();
+                let chunk_parts = &record.sha.split('_').collect::<Vec<&str>>();
                 match chunk_parts.last() {
                     Some(chunk_sha) => {
                         // println!("Verifying {}", record.sha);

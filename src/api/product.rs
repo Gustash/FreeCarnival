@@ -1,12 +1,12 @@
 use bytes::Bytes;
-use serde::{Deserialize, Serialize, Serializer, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{
     constants::{CONTENT_URL, DEV_URL},
     utils::ChangeTag,
 };
 
-use super::auth::{Product, ProductVersion, BuildOs};
+use super::auth::{BuildOs, Product, ProductVersion};
 
 #[derive(Debug, Serialize)]
 struct LatestBuildNumberPayload {
@@ -25,7 +25,11 @@ pub(crate) struct BuildManifestRecord {
     pub(crate) sha: String,
     #[serde(rename = "Flags")]
     pub(crate) flags: u8,
-    #[serde(rename = "File Name", deserialize_with = "from_latin1_str", serialize_with = "to_latin1_bytes")]
+    #[serde(
+        rename = "File Name",
+        deserialize_with = "from_latin1_str",
+        serialize_with = "to_latin1_bytes"
+    )]
     pub(crate) file_name: String,
     #[serde(rename = "Change Tag")]
     pub(crate) tag: Option<ChangeTag>,
@@ -45,7 +49,11 @@ impl BuildManifestRecord {
 pub(crate) struct BuildManifestChunksRecord {
     #[serde(rename = "ID")]
     pub(crate) id: u16,
-    #[serde(rename = "Filepath", deserialize_with = "from_latin1_str", serialize_with = "to_latin1_bytes")]
+    #[serde(
+        rename = "Filepath",
+        deserialize_with = "from_latin1_str",
+        serialize_with = "to_latin1_bytes"
+    )]
     pub(crate) file_path: String,
     #[serde(rename = "Chunk SHA")]
     pub(crate) sha: String,
@@ -59,11 +67,11 @@ where
     Ok(s.iter().cloned().map(char::from).collect())
 }
 
-fn to_latin1_bytes<S>(string: &String, serializer: S) -> Result<S::Ok, S::Error>
+fn to_latin1_bytes<S>(string: &str, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
-    serializer.serialize_bytes(&string.chars().into_iter().map(|c| c as u8).collect::<Vec<u8>>()[..])
+    serializer.serialize_bytes(&string.chars().map(|c| c as u8).collect::<Vec<u8>>()[..])
 }
 
 pub(crate) async fn get_build_manifest(
