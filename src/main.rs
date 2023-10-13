@@ -15,6 +15,7 @@ mod api;
 mod cli;
 mod config;
 mod constants;
+mod helpers;
 mod shared;
 mod utils;
 
