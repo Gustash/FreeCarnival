@@ -77,16 +77,13 @@ async fn main() {
         Commands::Install {
             slug,
             version,
-            max_download_workers,
-            max_memory_usage,
             path,
             base_path,
-            info,
-            skip_verify,
             os,
+            install_opts,
         } => {
             let mut installed = InstalledConfig::load().expect("Failed to load installed");
-            if installed.contains_key(&slug) && !info {
+            if installed.contains_key(&slug) && !install_opts.info {
                 println!("{slug} already installed.");
                 return;
             }
@@ -127,11 +124,8 @@ async fn main() {
                 client.clone(),
                 &slug,
                 &install_path,
+                install_opts,
                 selected_version,
-                max_download_workers,
-                max_memory_usage,
-                info,
-                skip_verify,
                 os,
             )
             .await
@@ -212,10 +206,7 @@ async fn main() {
         Commands::Update {
             slug,
             version,
-            max_download_workers,
-            max_memory_usage,
-            info,
-            skip_verify,
+            install_opts,
         } => {
             let mut installed = InstalledConfig::load().expect("Failed to load installed");
             let install_info = match installed.remove(&slug) {
@@ -250,12 +241,9 @@ async fn main() {
                 client.clone(),
                 &library,
                 &slug,
+                install_opts,
                 &install_info,
                 selected_version,
-                max_download_workers,
-                max_memory_usage,
-                info,
-                skip_verify,
             )
             .await
             {

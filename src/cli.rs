@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use crate::{constants::*, shared::models::api::BuildOs};
 
@@ -49,19 +49,6 @@ pub(crate) enum Commands {
     Install {
         /// The slug of the game e.g. syberia-ii
         slug: String,
-        /// How many download workers to run at one time.
-        /// Increasing this value will make downloads faster, but use more memory.
-        /// Lowering this value will lower memory usage at the cost of slower downloads.
-        ///
-        /// Note: Too many download workers can cause unreliable downloads. The default is
-        /// double your CPU_COUNT. You shouldn't deviate too much from this.
-        #[arg(long, default_value_t = *DEFAULT_MAX_DL_WORKERS)]
-        max_download_workers: usize,
-        /// How much memory to use to store chunks. Lowering this value will potentially make
-        /// downloads slower while being lighter on memory usage. Raising it will make the program
-        /// use more memory if needed, but can potentially speed up downloads.
-        #[arg(long, default_value_t = *DEFAULT_MAX_MEMORY_USAGE)]
-        max_memory_usage: usize,
         /// Install specific build version. If ommited, the latest build version will be installed.
         #[arg(long, short)]
         version: Option<String>,
@@ -73,16 +60,11 @@ pub(crate) enum Commands {
         /// creating additional subdirectories.
         #[arg(long)]
         path: Option<PathBuf>,
-        /// Print download info instead of installing game.
-        #[arg(long, short)]
-        info: bool,
-        /// Skip verifying chunks. This will make downloads faster but won't check for
-        /// corrupted/tampered files.
-        #[arg(long)]
-        skip_verify: bool,
         /// The build target OS to install
         #[arg(long)]
         os: Option<BuildOs>,
+        #[command(flatten)]
+        install_opts: InstallOpts,
     },
     /// Uninstalls a game
     Uninstall {
@@ -98,33 +80,14 @@ pub(crate) enum Commands {
     Update {
         /// The slug of the game e.g. syberia-ii
         slug: String,
-        /// How many download workers to run at one time.
-        /// Increasing this value will make downloads faster, but use more memory.
-        /// Lowering this value will lower memory usage at the cost of slower downloads.
-        ///
-        /// Note: Too many download workers can cause unreliable downloads. The default is
-        /// double your CPU_COUNT, or 16, whichever is lowest. You shouldn't deviate too much from
-        /// this.
-        #[arg(long, default_value_t = *DEFAULT_MAX_DL_WORKERS)]
-        max_download_workers: usize,
-        /// How much memory to use to store chunks. Lowering this value will potentially make
-        /// downloads slower while being lighter on memory usage. Raising it will make the program
-        /// use more memory if needed, but can potentially speed up downloads.
-        #[arg(long, default_value_t = *DEFAULT_MAX_MEMORY_USAGE)]
-        max_memory_usage: usize,
         /// Change to a specific version. Don't set this if you just want to update to the latest
         /// version.
         ///
         /// You can get a list of available versions by using the `info` command.
         #[arg(long, short)]
         version: Option<String>,
-        /// Print download info instead of updating game.
-        #[arg(long, short)]
-        info: bool,
-        /// Skip verifying chunks. This will make downloads faster but won't check for
-        /// corrupted/tampered files.
-        #[arg(long)]
-        skip_verify: bool,
+        #[command(flatten)]
+        install_opts: InstallOpts,
     },
     /// Launch an installed game
     Launch {
@@ -149,6 +112,30 @@ pub(crate) enum Commands {
         /// The slug of the game e.g. syberia-ii
         slug: String,
     },
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct InstallOpts {
+    /// How many download workers to run at one time.
+    /// Increasing this value will make downloads faster, but use more memory.
+    /// Lowering this value will lower memory usage at the cost of slower downloads.
+    ///
+    /// Note: Too many download workers can cause unreliable downloads. The default is
+    /// double your CPU_COUNT. You shouldn't deviate too much from this.
+    #[arg(long, default_value_t = *DEFAULT_MAX_DL_WORKERS)]
+    pub(crate) max_download_workers: usize,
+    /// How much memory to use to store chunks. Lowering this value will potentially make
+    /// downloads slower while being lighter on memory usage. Raising it will make the program
+    /// use more memory if needed, but can potentially speed up downloads.
+    #[arg(long, default_value_t = *DEFAULT_MAX_MEMORY_USAGE)]
+    pub(crate) max_memory_usage: usize,
+    /// Print download info instead of installing game.
+    #[arg(long, short)]
+    pub(crate) info: bool,
+    /// Skip verifying chunks. This will make downloads faster but won't check for
+    /// corrupted/tampered files.
+    #[arg(long)]
+    pub(crate) skip_verify: bool,
 }
 
 impl ValueEnum for BuildOs {

@@ -23,6 +23,7 @@ use tokio::{
 
 use crate::{
     api,
+    cli::InstallOpts,
     config::{GalaConfig, InstalledConfig, LibraryConfig},
     constants::*,
     shared::models::{
@@ -36,11 +37,8 @@ pub(crate) async fn install<'a>(
     client: reqwest::Client,
     slug: &String,
     install_path: &PathBuf,
+    install_opts: InstallOpts,
     version: Option<&ProductVersion>,
-    max_download_workers: usize,
-    max_memory_usage: usize,
-    info_only: bool,
-    skip_verify: bool,
     os: Option<BuildOs>,
 ) -> Result<Result<(String, Option<InstallInfo>), &'a str>, reqwest::Error> {
     let library = LibraryConfig::load().expect("Failed to load library");
@@ -73,7 +71,7 @@ pub(crate) async fn install<'a>(
     .await
     .expect("Failed to save build manifest");
 
-    if info_only {
+    if install_opts.info {
         let mut build_manifest_rdr = csv::Reader::from_reader(&build_manifest[..]);
         let download_size = build_manifest_rdr
             .byte_records()
@@ -116,9 +114,7 @@ pub(crate) async fn install<'a>(
         &build_manifest[..],
         &build_manifest_chunks[..],
         install_path.into(),
-        max_download_workers,
-        max_memory_usage,
-        skip_verify,
+        install_opts,
     )
     .await
     .expect("Failed to build from manifest");
@@ -178,12 +174,9 @@ pub(crate) async fn update(
     client: reqwest::Client,
     library: &LibraryConfig,
     slug: &String,
+    install_opts: InstallOpts,
     install_info: &InstallInfo,
     selected_version: Option<&ProductVersion>,
-    max_download_workers: usize,
-    max_memory_usage: usize,
-    info_only: bool,
-    skip_verify: bool,
 ) -> tokio::io::Result<(String, Option<InstallInfo>)> {
     let product = match library.collection.iter().find(|p| &p.slugged_name == slug) {
         Some(p) => p,
@@ -253,7 +246,7 @@ pub(crate) async fn update(
     )
     .await?;
 
-    if info_only {
+    if install_opts.info {
         let mut delta_build_manifest_rdr = csv::Reader::from_reader(&delta_manifest[..]);
         let download_size = delta_build_manifest_rdr
             .byte_records()
@@ -317,9 +310,7 @@ pub(crate) async fn update(
         &delta_manifest[..],
         &delta_manifest_chunks[..],
         OsPath::from(&install_info.install_path),
-        max_download_workers,
-        max_memory_usage,
-        skip_verify,
+        install_opts,
     )
     .await?;
 
@@ -881,9 +872,7 @@ async fn build_from_manifest(
     build_manifest_bytes: &[u8],
     build_manifest_chunks_bytes: &[u8],
     install_path: OsPath,
-    max_download_workers: usize,
-    max_memory_usage: usize,
-    skip_verify: bool,
+    install_opts: InstallOpts,
 ) -> tokio::io::Result<bool> {
     let mut write_queue = queue![];
     let mut chunk_queue = queue![];
@@ -1059,9 +1048,9 @@ async fn build_from_manifest(
     });
 
     println!("Downloading chunks...");
-    let max_chunks_in_memory = max_memory_usage / *MAX_CHUNK_SIZE;
+    let max_chunks_in_memory = install_opts.max_memory_usage / *MAX_CHUNK_SIZE;
     let mem_semaphore = Arc::new(Semaphore::new(max_chunks_in_memory));
-    let dl_semaphore = Arc::new(Semaphore::new(max_download_workers));
+    let dl_semaphore = Arc::new(Semaphore::new(install_opts.max_download_workers));
     while let Ok(record) = chunk_queue.remove() {
         let mem_permit = mem_semaphore.clone().acquire_owned().await.unwrap();
         let client = client.clone();
@@ -1081,7 +1070,7 @@ async fn build_from_manifest(
 
             dl_prog.inc(chunk.len() as u64);
 
-            if !skip_verify {
+            if !install_opts.skip_verify {
                 let chunk_parts = &record.sha.split('_').collect::<Vec<&str>>();
                 match chunk_parts.last() {
                     Some(chunk_sha) => {
