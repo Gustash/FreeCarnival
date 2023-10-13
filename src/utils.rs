@@ -13,7 +13,6 @@ use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use os_path::OsPath;
 use queues::*;
 use regex::Regex;
-use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::{
     fs::File,
@@ -23,14 +22,13 @@ use tokio::{
 };
 
 use crate::{
-    api::{
-        self,
-        auth::{BuildOs, Product, ProductVersion},
-        product::{BuildManifestChunksRecord, BuildManifestRecord},
-    },
+    api,
     config::{GalaConfig, InstalledConfig, LibraryConfig},
     constants::*,
-    shared::models::InstallInfo,
+    shared::models::{
+        api::{BuildOs, Product, ProductVersion},
+        BuildManifestChunksRecord, BuildManifestRecord, ChangeTag, InstallInfo,
+    },
 };
 
 // TODO: Refactor info printing and chunk downloading to separate functions
@@ -597,13 +595,6 @@ async fn find_app_recursive(path: &PathBuf) -> Option<PathBuf> {
     }
 
     None
-}
-
-#[derive(PartialEq, Clone, Debug, Serialize, Deserialize)]
-pub(crate) enum ChangeTag {
-    Added,
-    Modified,
-    Removed,
 }
 
 async fn read_or_generate_delta_manifest(

@@ -3,13 +3,13 @@ use std::sync::Arc;
 use crate::cli::Cli;
 use crate::config::GalaConfig;
 use crate::{api::auth, config::InstalledConfig};
-use api::auth::{LoginResult, SyncResult};
 use api::GalaClient;
 use clap::Parser;
 use cli::Commands;
 use config::{CookieConfig, LibraryConfig, UserConfig};
 use constants::DEFAULT_BASE_INSTALL_PATH;
 use reqwest_cookie_store::CookieStoreMutex;
+use shared::models::api::{LoginResult, SyncResult};
 
 mod api;
 mod cli;

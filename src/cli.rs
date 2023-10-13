@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
 
-use crate::{api::auth::BuildOs, constants::*};
+use crate::{constants::*, shared::models::api::BuildOs};
 
 /// Native cross-platform indieGala client
 #[derive(Parser, Debug)]

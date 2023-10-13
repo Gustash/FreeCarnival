@@ -5,9 +5,11 @@ use reqwest_cookie_store::CookieStore;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use crate::{
-    api::auth::{Product, UserInfo},
     constants::PROJECT_NAME,
-    shared::models::InstallInfo,
+    shared::models::{
+        api::{Product, UserInfo},
+        InstallInfo,
+    },
 };
 
 pub(crate) trait GalaConfig
