@@ -317,7 +317,7 @@ pub(crate) async fn launch(
     client: &reqwest::Client,
     product: &Product,
     install_info: &InstallInfo,
-    no_wine: bool,
+    #[cfg(not(target_os = "windows"))] no_wine: bool,
     #[cfg(not(target_os = "windows"))] wine_bin: Option<PathBuf>,
     #[cfg(not(target_os = "windows"))] wine_prefix: Option<PathBuf>,
     wrapper: Option<PathBuf>,
@@ -433,34 +433,18 @@ pub(crate) async fn launch(
                 exe.to_str().unwrap().to_owned()
             }
         };
-    let (args, args2) = (
-        if !wrapper_string.is_empty() {
-            exe.to_str().unwrap().to_owned()
-        } else {
-            "".to_owned()
-        },
-        if should_use_wine {
-            exe.to_str().unwrap().to_owned()
-        } else {
-            "".to_owned()
-        }, 
-    );
 
     let mut command = tokio::process::Command::new(binary);
     if wrapper_vec.len() > 1 {
-        let mut iter = wrapper_vec.iter().skip(1);
-        let mut val = iter.next();
-        while val != None {
-            command.arg(val.unwrap());
-            val = iter.next();
+        let iter = wrapper_vec.iter().skip(1);
+        for val in iter {
+            command.arg(val);
         };
     };
-    if !args.is_empty() {
-        command.arg(args);
+
+    if !wrapper_string.is_empty() || should_use_wine {
+        command.arg(exe.to_str().unwrap().to_owned())
     };
-    if !args2.is_empty() {
-        command.arg(args2);
-    }
     // TODO:
     // Handle cwd and launch args. Since I don't have games that have these I don't have a
     // reliable way to test...

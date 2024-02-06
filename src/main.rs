@@ -289,11 +289,11 @@ async fn main() {
                     return;
                 }
             };
-            #[cfg(target_os = "windows")] let no_wine = true;
             match utils::launch(
                 &client,
                 product,
                 install_info,
+                #[cfg(not(target_os = "windows"))]
                 no_wine,
                 #[cfg(not(target_os = "windows"))]
                 wine,
@@ -361,7 +361,7 @@ async fn main() {
         }
         Commands::Config => {
             let conf = LibraryConfig::get_config_path().to_string_lossy().to_string();
-            println!("Config path is: {conf}");
+            println!("{conf}");
         }
     };
 

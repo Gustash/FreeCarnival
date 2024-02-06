@@ -38,7 +38,7 @@ where
         } else {
             match confy::get_configuration_file_path(*PROJECT_NAME, Self::config_name()) {
                 Ok(p) => PathBuf::from(p.to_str().unwrap_or_default()).to_owned(),
-                Err(_e) => PathBuf::from("").to_owned()
+                Err(_e) => panic!("Can't get config path for {}", Self::config_name())
             }
         }
     }
