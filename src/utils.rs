@@ -3,6 +3,7 @@ use std::{collections::HashMap, path::PathBuf, process::ExitStatus, sync::Arc};
 use human_bytes::human_bytes;
 use os_path::OsPath;
 use regex::Regex;
+use shlex::split;
 use tokio::task::JoinHandle;
 
 #[cfg(target_os = "macos")]
@@ -316,8 +317,10 @@ pub(crate) async fn launch(
     client: &reqwest::Client,
     product: &Product,
     install_info: &InstallInfo,
+    no_wine: bool,
     #[cfg(not(target_os = "windows"))] wine_bin: Option<PathBuf>,
     #[cfg(not(target_os = "windows"))] wine_prefix: Option<PathBuf>,
+    wrapper: Option<PathBuf>,
 ) -> tokio::io::Result<Option<ExitStatus>> {
     let os = &install_info.os;
 
@@ -326,8 +329,12 @@ pub(crate) async fn launch(
         BuildOs::Windows => match wine_bin {
             Some(wine_bin) => Some(wine_bin),
             None => {
-                println!("You need to set --wine-bin to run Windows games");
-                return Ok(None);
+                if !no_wine {
+                    println!("You need to set --wine-bin to run Windows games");
+                    return Ok(None);
+                } else {
+                    None
+                }
             }
         },
         _ => None,
@@ -404,28 +411,56 @@ pub(crate) async fn launch(
     println!("{} was selected", exe.display());
 
     #[cfg(not(target_os = "windows"))]
-    let should_use_wine = os == &BuildOs::Windows;
-    let (binary, args) = (
-        #[cfg(target_os = "windows")]
-        exe.to_str().unwrap().to_owned(),
-        #[cfg(not(target_os = "windows"))]
-        if should_use_wine {
-            wine_bin.unwrap().to_str().unwrap().to_owned()
+    let should_use_wine = (os == &BuildOs::Windows) && !no_wine;
+    let wrapper_string = if wrapper.is_some() {
+            wrapper.unwrap_or_default().to_str().unwrap().to_owned()
         } else {
-            exe.to_str().unwrap().to_owned()
-        },
-        #[cfg(target_os = "windows")]
-        "".to_owned(),
-        #[cfg(not(target_os = "windows"))]
-        if should_use_wine {
+            "".to_owned()
+        };
+
+    let wrapper_vec = if !wrapper_string.is_empty() {
+        split(&wrapper_string.to_owned()).unwrap()
+    } else {
+        Vec::<String>::new()
+    };
+    let binary = 
+        if wrapper_vec.len() > 0 {
+            wrapper_vec[0].to_owned()
+        } else {
+            if should_use_wine {
+                wine_bin.unwrap().to_str().unwrap().to_owned()
+            } else {
+                exe.to_str().unwrap().to_owned()
+            }
+        };
+    let (args, args2) = (
+        if !wrapper_string.is_empty() {
             exe.to_str().unwrap().to_owned()
         } else {
             "".to_owned()
         },
+        if should_use_wine {
+            exe.to_str().unwrap().to_owned()
+        } else {
+            "".to_owned()
+        }, 
     );
 
     let mut command = tokio::process::Command::new(binary);
-    command.arg(args);
+    if wrapper_vec.len() > 1 {
+        let mut iter = wrapper_vec.iter().skip(1);
+        let mut val = iter.next();
+        while val != None {
+            command.arg(val.unwrap());
+            val = iter.next();
+        };
+    };
+    if !args.is_empty() {
+        command.arg(args);
+    };
+    if !args2.is_empty() {
+        command.arg(args2);
+    }
     // TODO:
     // Handle cwd and launch args. Since I don't have games that have these I don't have a
     // reliable way to test...

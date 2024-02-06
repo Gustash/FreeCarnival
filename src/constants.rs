@@ -15,6 +15,12 @@ lazy_static! {
     pub(crate) static ref PROJECT_NAME: &'static str = env!("CARGO_PKG_NAME");
     pub(crate) static ref PROJECT_VERSION: &'static str = env!("CARGO_PKG_VERSION");
     pub(crate) static ref VERSION_CODENAME: &'static str = include_str!("../CODENAME");
+    pub(crate) static ref CONFIG_PATH: String = {
+        match std::env::var("CARNIVAL_CONFIG_PATH") {
+            Ok(p) => String::from(p),
+            Err(_e) => "".to_string()
+        }
+    };
     pub(crate) static ref HELP_VERSION: &'static str = {
         Box::leak(format!("{} - {}", *PROJECT_VERSION, *VERSION_CODENAME).into_boxed_str())
     };

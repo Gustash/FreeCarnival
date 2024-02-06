@@ -93,14 +93,21 @@ pub(crate) enum Commands {
     Launch {
         /// The slug of the game e.g. syberia-ii
         slug: String,
-        /// The WINE prefix to use for this game
+        /// Do not use wine
         #[cfg(not(target_os = "windows"))]
         #[arg(long)]
+        no_wine: bool,
+        /// The WINE prefix to use for this game
+        #[cfg(not(target_os = "windows"))]
+        #[arg(long, required_unless_present("no_wine"))]
         wine_prefix: Option<PathBuf>,
         /// The WINE bin to use for launching the game
         #[cfg(not(target_os = "windows"))]
+        #[arg(long, required_unless_present("no_wine"))]
+        wine: Option<PathBuf>,
+        /// Use a wrapper to launch
         #[arg(long)]
-        wine_bin: Option<PathBuf>,
+        wrapper: Option<PathBuf>
     },
     /// Print info about game
     Info {
@@ -112,6 +119,8 @@ pub(crate) enum Commands {
         /// The slug of the game e.g. syberia-ii
         slug: String,
     },
+    /// Display library config path
+    Config,
 }
 
 #[derive(Debug, Args)]

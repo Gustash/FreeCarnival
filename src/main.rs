@@ -266,9 +266,12 @@ async fn main() {
         Commands::Launch {
             slug,
             #[cfg(not(target_os = "windows"))]
-            wine_bin,
+            wine,
             #[cfg(not(target_os = "windows"))]
             wine_prefix,
+            #[cfg(not(target_os = "windows"))]
+            no_wine,
+            wrapper,
         } => {
             let installed = InstalledConfig::load().expect("Failed to load installed");
             let library = LibraryConfig::load().expect("Failed to load library");
@@ -286,15 +289,17 @@ async fn main() {
                     return;
                 }
             };
-
+            #[cfg(target_os = "windows")] let no_wine = true;
             match utils::launch(
                 &client,
                 product,
                 install_info,
+                no_wine,
                 #[cfg(not(target_os = "windows"))]
-                wine_bin,
+                wine,
                 #[cfg(not(target_os = "windows"))]
                 wine_prefix,
+                wrapper,
             )
             .await
             {
@@ -353,6 +358,10 @@ async fn main() {
                     println!("Failed to verify files: {}", err);
                 }
             }
+        }
+        Commands::Config => {
+            let conf = LibraryConfig::get_config_path().to_string_lossy().to_string();
+            println!("Config path is: {conf}");
         }
     };
 
