@@ -436,8 +436,7 @@ pub(crate) async fn launch(
 
     let mut command = tokio::process::Command::new(binary);
     if wrapper_vec.len() > 1 {
-        let iter = wrapper_vec.iter().skip(1);
-        for val in iter {
+        for val in wrapper_vec.iter().skip(1) {
             command.arg(val);
         };
     };
