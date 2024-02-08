@@ -360,6 +360,7 @@ pub(crate) async fn build_from_manifest(
 
         prepare_file(
             &install_path,
+            #[cfg(target_os = "macos")]
             &os,
             &record.file_name,
             record.is_directory(),
@@ -558,6 +559,7 @@ pub(crate) async fn append_chunk(
 
 pub(crate) async fn prepare_file(
     base_install_path: &OsPath,
+    #[cfg(target_os = "macos")]
     os: &BuildOs,
     file_name: &String,
     is_directory: bool,

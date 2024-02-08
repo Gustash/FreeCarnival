@@ -266,9 +266,12 @@ async fn main() {
         Commands::Launch {
             slug,
             #[cfg(not(target_os = "windows"))]
-            wine_bin,
+            wine,
             #[cfg(not(target_os = "windows"))]
             wine_prefix,
+            #[cfg(not(target_os = "windows"))]
+            no_wine,
+            wrapper,
         } => {
             let installed = InstalledConfig::load().expect("Failed to load installed");
             let library = LibraryConfig::load().expect("Failed to load library");
@@ -286,15 +289,17 @@ async fn main() {
                     return;
                 }
             };
-
             match utils::launch(
                 &client,
                 product,
                 install_info,
                 #[cfg(not(target_os = "windows"))]
-                wine_bin,
+                no_wine,
+                #[cfg(not(target_os = "windows"))]
+                wine,
                 #[cfg(not(target_os = "windows"))]
                 wine_prefix,
+                wrapper,
             )
             .await
             {

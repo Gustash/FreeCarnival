@@ -1,11 +1,13 @@
 use std::collections::HashMap;
 
 use confy::ConfyError;
+use std::path::{Path, PathBuf};
 use reqwest_cookie_store::CookieStore;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use crate::{
     constants::PROJECT_NAME,
+    constants::CONFIG_PATH,
     shared::models::{
         api::{Product, UserInfo},
         InstallInfo,
@@ -17,18 +19,29 @@ where
     Self: Sized + Serialize + DeserializeOwned + Default,
 {
     fn load() -> Result<Self, ConfyError> {
-        confy::load::<Self>(*PROJECT_NAME, Self::config_name())
+        confy::load_path::<Self>(Self::get_config_path())
     }
 
     fn store(&self) -> Result<(), ConfyError> {
-        confy::store(*PROJECT_NAME, Self::config_name(), self)
+        confy::store_path(Self::get_config_path(), self)
     }
 
     fn clear() -> Result<(), ConfyError> {
-        confy::store(*PROJECT_NAME, Self::config_name(), Self::default())
+        confy::store_path(Self::get_config_path(), Self::default())
     }
 
     fn config_name() -> &'static str;
+
+    fn get_config_path() -> PathBuf {
+        if !CONFIG_PATH.is_empty() {
+            Path::new(&(*CONFIG_PATH)).join(format!("{}.yml", Self::config_name())).to_path_buf()
+        } else {
+            match confy::get_configuration_file_path(*PROJECT_NAME, Self::config_name()) {
+                Ok(p) => PathBuf::from(p.to_str().unwrap_or_default()).to_owned(),
+                Err(_e) => panic!("Can't get config path for {}", Self::config_name())
+            }
+        }
+    }
 }
 
 #[derive(Default, Debug, Serialize, Deserialize)]
