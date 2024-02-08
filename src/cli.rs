@@ -119,8 +119,6 @@ pub(crate) enum Commands {
         /// The slug of the game e.g. syberia-ii
         slug: String,
     },
-    /// Display library config path
-    Config,
 }
 
 #[derive(Debug, Args)]

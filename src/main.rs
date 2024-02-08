@@ -359,10 +359,6 @@ async fn main() {
                 }
             }
         }
-        Commands::Config => {
-            let conf = LibraryConfig::get_config_path().to_string_lossy().to_string();
-            println!("{conf}");
-        }
     };
 
     drop(client);

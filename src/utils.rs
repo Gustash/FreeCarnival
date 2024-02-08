@@ -441,8 +441,8 @@ pub(crate) async fn launch(
         };
     };
 
-    if !wrapper_string.is_empty() || should_use_wine {
-        command.arg(exe.to_str().unwrap().to_owned())
+    if !wrapper_string.is_empty() || should_use_wine == true {
+        command.arg(exe.to_str().unwrap().to_owned());
     };
     // TODO:
     // Handle cwd and launch args. Since I don't have games that have these I don't have a
