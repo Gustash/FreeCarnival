@@ -441,7 +441,7 @@ pub(crate) async fn launch(
         };
     };
 
-    if !wrapper_string.is_empty() || should_use_wine == true {
+    if !wrapper_string.is_empty() || should_use_wine {
         command.arg(exe.to_str().unwrap().to_owned());
     };
     // TODO:
