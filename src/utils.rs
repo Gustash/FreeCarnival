@@ -410,6 +410,13 @@ pub(crate) async fn launch(
     };
     println!("{} was selected", exe.display());
 
+
+    #[cfg(not(target_os = "windows"))]
+    let should_use_wine = (os == &BuildOs::Windows) && !no_wine;
+    #[cfg(target_os = "windows")]
+    let should_use_wine = false;
+    #[cfg(target_os = "windows")]
+    let wine_bin: Option<PathBuf> = None;
     let wrapper_string = if wrapper.is_some() {
             wrapper.unwrap_or_default().to_str().unwrap().to_owned()
         } else {
@@ -444,7 +451,7 @@ pub(crate) async fn launch(
         };
     };
 
-    if !wrapper_string.is_empty() || !no_wine {
+    if !wrapper_string.is_empty() || should_use_wine {
         command.arg(exe.to_str().unwrap().to_owned());
     };
     // TODO:
