@@ -426,8 +426,6 @@ pub(crate) async fn launch(
     
     #[cfg(target_os = "windows")]
     let no_wine = true;
-    #[cfg(target_os = "windows")]
-    let wine_bin = Some(PathBuf::new());
     let wrapper_vec = if !wrapper_string.is_empty() {
         split(&wrapper_string.to_owned()).unwrap()
     } else {
