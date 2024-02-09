@@ -412,12 +412,15 @@ pub(crate) async fn launch(
 
     #[cfg(not(target_os = "windows"))]
     let should_use_wine = (os == &BuildOs::Windows) && !no_wine;
+    #[cfg(target_os = "windows")]
+    let should_use_wine = false;
+    #[cfg(target_os = "windows")]
+    let wine_bin: Option<PathBuf> = None;
     let wrapper_string = if wrapper.is_some() {
             wrapper.unwrap_or_default().to_str().unwrap().to_owned()
         } else {
             "".to_owned()
         };
-
     let wrapper_vec = if !wrapper_string.is_empty() {
         split(&wrapper_string.to_owned()).unwrap()
     } else {
