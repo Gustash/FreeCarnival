@@ -422,7 +422,6 @@ pub(crate) async fn launch(
         } else {
             "".to_owned()
         };
-
     
     #[cfg(target_os = "windows")]
     let no_wine = true;
