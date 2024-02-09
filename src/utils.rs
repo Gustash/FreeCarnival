@@ -416,6 +416,11 @@ pub(crate) async fn launch(
             "".to_owned()
         };
 
+    
+    #[cfg(target_os = "windows")]
+    let no_wine = true;
+    #[cfg(target_os = "windows")]
+    let wine_bin = Some(PathBuf::new());
     let wrapper_vec = if !wrapper_string.is_empty() {
         split(&wrapper_string.to_owned()).unwrap()
     } else {
@@ -425,14 +430,11 @@ pub(crate) async fn launch(
         if wrapper_vec.len() > 0 {
             wrapper_vec[0].to_owned()
         } else {
-            #[cfg(not(target_os = "windows"))]
             if !no_wine {
                 wine_bin.unwrap().to_str().unwrap().to_owned()
             } else {
                 exe.to_str().unwrap().to_owned()
             }
-            #[cfg(target_os = "windows")]
-            exe.to_str().unwrap().to_owned()
         };
 
     let mut command = tokio::process::Command::new(binary);
@@ -442,11 +444,7 @@ pub(crate) async fn launch(
         };
     };
 
-    if !wrapper_string.is_empty() {
-        command.arg(exe.to_str().unwrap().to_owned());
-    };
-    #[cfg(not(target_os = "windows"))]
-    if !no_wine {
+    if !wrapper_string.is_empty() || !no_wine {
         command.arg(exe.to_str().unwrap().to_owned());
     };
     // TODO:
