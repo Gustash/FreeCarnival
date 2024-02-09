@@ -410,7 +410,6 @@ pub(crate) async fn launch(
     };
     println!("{} was selected", exe.display());
 
-
     #[cfg(not(target_os = "windows"))]
     let should_use_wine = (os == &BuildOs::Windows) && !no_wine;
     #[cfg(target_os = "windows")]
