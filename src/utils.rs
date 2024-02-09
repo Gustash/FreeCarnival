@@ -423,8 +423,6 @@ pub(crate) async fn launch(
             "".to_owned()
         };
     
-    #[cfg(target_os = "windows")]
-    let no_wine = true;
     let wrapper_vec = if !wrapper_string.is_empty() {
         split(&wrapper_string.to_owned()).unwrap()
     } else {
@@ -434,7 +432,7 @@ pub(crate) async fn launch(
         if wrapper_vec.len() > 0 {
             wrapper_vec[0].to_owned()
         } else {
-            if !no_wine {
+            if should_use_wine {
                 wine_bin.unwrap().to_str().unwrap().to_owned()
             } else {
                 exe.to_str().unwrap().to_owned()
