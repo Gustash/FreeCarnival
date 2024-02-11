@@ -99,11 +99,11 @@ pub(crate) enum Commands {
         no_wine: bool,
         /// The WINE prefix to use for this game
         #[cfg(not(target_os = "windows"))]
-        #[arg(long, required_unless_present("no_wine"))]
+        #[arg(long)]
         wine_prefix: Option<PathBuf>,
         /// The WINE bin to use for launching the game
         #[cfg(not(target_os = "windows"))]
-        #[arg(long, required_unless_present("no_wine"))]
+        #[arg(long)]
         wine: Option<PathBuf>,
         /// Use a wrapper to launch
         #[arg(long)]
