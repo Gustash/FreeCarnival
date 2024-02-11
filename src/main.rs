@@ -29,7 +29,11 @@ async fn main() {
     if args.needs_sync() {
         println!("Syncing library...");
         match api::auth::sync(&client).await {
-            Ok(result) => save_user_info(&result),
+            Ok(Some(result)) => save_user_info(&result),
+            Ok(None) => {
+                println!("Failed to sync: your authentication is invalid.");
+                return;
+            }
             Err(err) => {
                 println!("Failed to sync: {err:#?}");
                 return;
@@ -54,7 +58,10 @@ async fn main() {
                     }
 
                     match auth::sync(&client).await {
-                        Ok(result) => save_user_info(&result),
+                        Ok(Some(result)) => save_user_info(&result),
+                        Ok(None) => {
+                            println!("Failed to sync: your authentication is invalid.");
+                        }
                         Err(err) => println!("Failed to sync: {err:#?}"),
                     };
                 }
@@ -371,15 +378,14 @@ async fn main() {
         .expect("Failed to save cookie config");
 }
 
-fn save_user_info(data: &Option<SyncResult>) {
-    if let Some(SyncResult {
+fn save_user_info(
+    SyncResult {
         user_config,
         library_config,
-    }) = data
-    {
-        user_config.store().expect("Failed to save user config");
-        library_config
-            .store()
-            .expect("Failed to save library config");
-    }
+    }: &SyncResult,
+) {
+    user_config.store().expect("Failed to save user config");
+    library_config
+        .store()
+        .expect("Failed to save library config");
 }
