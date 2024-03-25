@@ -366,10 +366,12 @@ pub(crate) async fn launch(
         },
         None => None,
     };
+    let install_path = OsPath::from(&install_info.install_path);
+
     let exe = match exe_path {
-        Some(path) => OsPath::from(&install_info.install_path)
-            .join(path)
-            .to_pathbuf(),
+        Some(path) => install_path
+        .join(path)
+        .to_pathbuf(),
         None => match os {
             BuildOs::Windows => match find_exe_recursive(&install_info.install_path).await {
                 Some(exe) => exe,
@@ -454,7 +456,8 @@ pub(crate) async fn launch(
     if let Some(wine_prefix) = wine_prefix {
         command.env("WINEPREFIX", wine_prefix);
     }
-    let mut child = command.spawn()?;
+    println!("{} is the CWD", install_path);
+    let mut child = command.current_dir(install_path.to_pathbuf()).spawn()?;
 
     let status = child.wait().await?;
 
