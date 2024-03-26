@@ -369,9 +369,7 @@ pub(crate) async fn launch(
     let install_path = OsPath::from(&install_info.install_path);
 
     let exe = match exe_path {
-        Some(path) => install_path
-        .join(path)
-        .to_pathbuf(),
+        Some(path) => install_path.join(path).to_pathbuf(),
         None => match os {
             BuildOs::Windows => match find_exe_recursive(&install_info.install_path).await {
                 Some(exe) => exe,
@@ -419,31 +417,30 @@ pub(crate) async fn launch(
     #[cfg(target_os = "windows")]
     let wine_bin: Option<PathBuf> = None;
     let wrapper_string = if wrapper.is_some() {
-            wrapper.unwrap_or_default().to_str().unwrap().to_owned()
-        } else {
-            "".to_owned()
-        };
+        wrapper.unwrap_or_default().to_str().unwrap().to_owned()
+    } else {
+        "".to_owned()
+    };
     let wrapper_vec = if !wrapper_string.is_empty() {
         split(&wrapper_string.to_owned()).unwrap()
     } else {
         Vec::<String>::new()
     };
-    let binary = 
-        if wrapper_vec.len() > 0 {
-            wrapper_vec[0].to_owned()
+    let binary = if wrapper_vec.len() > 0 {
+        wrapper_vec[0].to_owned()
+    } else {
+        if should_use_wine {
+            wine_bin.unwrap().to_str().unwrap().to_owned()
         } else {
-            if should_use_wine {
-                wine_bin.unwrap().to_str().unwrap().to_owned()
-            } else {
-                exe.to_str().unwrap().to_owned()
-            }
-        };
+            exe.to_str().unwrap().to_owned()
+        }
+    };
 
     let mut command = tokio::process::Command::new(binary);
     if wrapper_vec.len() > 1 {
         for val in wrapper_vec.iter().skip(1) {
             command.arg(val);
-        };
+        }
     };
 
     if !wrapper_string.is_empty() || should_use_wine {

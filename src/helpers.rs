@@ -559,8 +559,7 @@ pub(crate) async fn append_chunk(
 
 pub(crate) async fn prepare_file(
     base_install_path: &OsPath,
-    #[cfg(target_os = "macos")]
-    os: &BuildOs,
+    #[cfg(target_os = "macos")] os: &BuildOs,
     file_name: &String,
     is_directory: bool,
     #[cfg(target_os = "macos")] mac_executable: &mut mac::MacAppExecutables,
