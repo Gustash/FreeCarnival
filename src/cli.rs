@@ -107,7 +107,7 @@ pub(crate) enum Commands {
         wine: Option<PathBuf>,
         /// Use a wrapper to launch
         #[arg(long)]
-        wrapper: Option<PathBuf>
+        wrapper: Option<PathBuf>,
     },
     /// Print info about game
     Info {
