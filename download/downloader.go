@@ -24,16 +24,15 @@ type Downloader struct {
 	options DownloadOptions
 
 	// Memory management
-	memoryUsed   atomic.Int64
-	memoryMu     sync.Mutex
-	memoryCond   *sync.Cond
-	maxMemory    int64
+	memoryUsed atomic.Int64
+	memoryMu   sync.Mutex
+	memoryCond *sync.Cond
+	maxMemory  int64
 
 	// Progress tracking
-	totalBytes      int64
-	downloadedBytes atomic.Int64
-	totalFiles      int
-	completedFiles  atomic.Int32
+	totalBytes int64
+	totalFiles int
+	progress   *ProgressTracker
 }
 
 // NewDownloader creates a new downloader instance
@@ -66,7 +65,7 @@ func (d *Downloader) Download(ctx context.Context, installPath string) error {
 
 	// Calculate total size and file count
 	for _, record := range buildManifest {
-		if !record.IsDirectory() {
+		if !record.IsDirectory() && !record.IsEmpty() {
 			d.totalBytes += int64(record.SizeInBytes)
 			d.totalFiles++
 		}
@@ -77,7 +76,7 @@ func (d *Downloader) Download(ctx context.Context, installPath string) error {
 		return nil
 	}
 
-	fmt.Printf("Total download size: %s (%d files)\n", formatBytes(d.totalBytes), d.totalFiles)
+	fmt.Printf("Total download size: %s (%d files)\n\n", formatBytes(d.totalBytes), d.totalFiles)
 
 	// Create directory structure and prepare file info
 	fileInfoMap, err := d.prepareInstallation(installPath, buildManifest)
@@ -88,15 +87,33 @@ func (d *Downloader) Download(ctx context.Context, installPath string) error {
 	// Group chunks by file
 	fileChunks := d.groupChunksByFile(chunksManifest, fileInfoMap)
 
+	// Create progress tracker
+	d.progress = NewProgressTracker(d.totalBytes, d.totalFiles)
+
+	// Add all files to the progress tracker
+	for _, info := range fileInfoMap {
+		d.progress.AddFile(info.Index, info.Record.FileName, info.ChunkCount, int64(info.Record.SizeInBytes))
+	}
+
 	// Start download workers and file writers
-	return d.downloadAndWrite(ctx, installPath, fileChunks, fileInfoMap)
+	err = d.downloadAndWrite(ctx, installPath, fileChunks, fileInfoMap)
+
+	if err != nil {
+		d.progress.Abort()
+		return err
+	}
+
+	d.progress.Wait()
+	d.progress.PrintSummary()
+
+	return nil
 }
 
 type fileInfo struct {
-	Index       int
-	Record      BuildManifestRecord
-	FullPath    string
-	ChunkCount  int
+	Index      int
+	Record     BuildManifestRecord
+	FullPath   string
+	ChunkCount int
 }
 
 func (d *Downloader) prepareInstallation(installPath string, manifest []BuildManifestRecord) (map[string]*fileInfo, error) {
@@ -158,10 +175,10 @@ func (d *Downloader) downloadAndWrite(ctx context.Context, installPath string, f
 	// Create channels
 	chunkJobs := make(chan ChunkDownload, d.options.MaxDownloadWorkers*2)
 	downloadResults := make(chan DownloadedChunk, d.options.MaxDownloadWorkers*2)
-	
+
 	// Error channel for fatal errors
 	errChan := make(chan error, 1)
-	
+
 	// Context for cancellation
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -243,8 +260,8 @@ func (d *Downloader) downloadWorker(ctx context.Context, jobs <-chan ChunkDownlo
 			}
 
 			// Download the chunk
-			data, err := d.downloadChunk(ctx, job.ChunkSHA)
-			
+			data, err := d.downloadChunk(ctx, job.FileIndex, job.ChunkSHA)
+
 			result := DownloadedChunk{
 				FileIndex:  job.FileIndex,
 				ChunkIndex: job.ChunkIndex,
@@ -280,7 +297,7 @@ func (d *Downloader) downloadWorker(ctx context.Context, jobs <-chan ChunkDownlo
 	}
 }
 
-func (d *Downloader) downloadChunk(ctx context.Context, chunkSHA string) ([]byte, error) {
+func (d *Downloader) downloadChunk(ctx context.Context, fileIndex int, chunkSHA string) ([]byte, error) {
 	url := GetChunkURL(d.product, d.version.OS, chunkSHA)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -304,8 +321,10 @@ func (d *Downloader) downloadChunk(ctx context.Context, chunkSHA string) ([]byte
 		return nil, err
 	}
 
-	// Update downloaded bytes counter
-	d.downloadedBytes.Add(int64(len(data)))
+	// Update progress tracker
+	if d.progress != nil {
+		d.progress.ChunkDownloaded(fileIndex, int64(len(data)))
+	}
 
 	return data, nil
 }
@@ -334,8 +353,8 @@ func (d *Downloader) releaseMemory(size int64) {
 func (d *Downloader) fileWriter(ctx context.Context, results <-chan DownloadedChunk, fileChunks map[int][]BuildManifestChunksRecord, fileInfoMap map[string]*fileInfo) error {
 	// Track pending chunks per file (chunks that arrived out of order)
 	pendingChunks := make(map[int]map[int][]byte) // fileIndex -> chunkIndex -> data
-	nextChunkIndex := make(map[int]int)            // fileIndex -> next expected chunk index
-	openFiles := make(map[int]*os.File)            // fileIndex -> open file handle
+	nextChunkIndex := make(map[int]int)           // fileIndex -> next expected chunk index
+	openFiles := make(map[int]*os.File)           // fileIndex -> open file handle
 
 	// Initialize tracking for each file
 	for _, info := range fileInfoMap {
@@ -405,8 +424,14 @@ func (d *Downloader) writeChunkSequence(ctx context.Context, openFiles map[int]*
 	if _, err := f.Write(data); err != nil {
 		return fmt.Errorf("failed to write to %s: %w", info.FullPath, err)
 	}
-	d.releaseMemory(int64(len(data)))
+	chunkSize := int64(len(data))
+	d.releaseMemory(chunkSize)
 	nextChunkIndex[fileIdx]++
+
+	// Track disk write progress
+	if d.progress != nil {
+		d.progress.ChunkWritten(fileIdx, chunkSize)
+	}
 
 	// Write any pending sequential chunks
 	for {
@@ -419,9 +444,15 @@ func (d *Downloader) writeChunkSequence(ctx context.Context, openFiles map[int]*
 		if _, err := f.Write(pendingData); err != nil {
 			return fmt.Errorf("failed to write to %s: %w", info.FullPath, err)
 		}
-		d.releaseMemory(int64(len(pendingData)))
+		pendingSize := int64(len(pendingData))
+		d.releaseMemory(pendingSize)
 		delete(pendingChunks[fileIdx], nextIdx)
 		nextChunkIndex[fileIdx]++
+
+		// Track disk write progress
+		if d.progress != nil {
+			d.progress.ChunkWritten(fileIdx, pendingSize)
+		}
 	}
 
 	// Check if file is complete
@@ -429,10 +460,11 @@ func (d *Downloader) writeChunkSequence(ctx context.Context, openFiles map[int]*
 	if nextChunkIndex[fileIdx] >= totalChunks {
 		f.Close()
 		delete(openFiles, fileIdx)
-		d.completedFiles.Add(1)
-		
-		completed := d.completedFiles.Load()
-		fmt.Printf("\rProgress: %d/%d files completed", completed, d.totalFiles)
+
+		// Mark file complete in progress tracker
+		if d.progress != nil {
+			d.progress.FileComplete(fileIdx)
+		}
 	}
 
 	return nil
@@ -488,4 +520,3 @@ func extractSHA(chunkID string) string {
 	}
 	return chunkID[lastUnderscore+1:]
 }
-
