@@ -147,6 +147,13 @@ func (d *Downloader) Download(ctx context.Context, installPath string) error {
 	d.progress.Wait()
 	d.progress.PrintSummary()
 
+	// For Mac builds, mark the app bundle executables as executable
+	if d.version.OS == auth.BuildOSMac {
+		if err := MarkMacExecutables(installPath); err != nil {
+			return fmt.Errorf("failed to mark Mac executables: %w", err)
+		}
+	}
+
 	return nil
 }
 
