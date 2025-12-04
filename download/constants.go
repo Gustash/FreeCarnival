@@ -11,10 +11,13 @@ const (
 )
 
 var (
-	// DefaultMaxDownloadWorkers is the default number of parallel download workers
+	// DefaultMaxDownloadWorkers is the default number of parallel download workers.
+	// Uses min(NumCPU * 2, 16) like Nile/Legendary:
+	// - CPU count is a proxy for overall system capability (RAM, storage speed)
+	// - Cap at 16 to avoid overwhelming CDN or server rate limiting
+	// - 2x multiplier because workers mostly wait on network I/O
 	DefaultMaxDownloadWorkers = min(runtime.NumCPU()*2, 16)
 
 	// DefaultMaxMemoryUsage is the default maximum memory usage for buffering chunks (1 GiB)
 	DefaultMaxMemoryUsage = MaxChunkSize * 1024
 )
-

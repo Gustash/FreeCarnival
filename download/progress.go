@@ -149,6 +149,12 @@ func (pt *ProgressTracker) render() {
 		// Mini progress bar for file
 		fileBarWidth := 20
 		fileFilled := int(filePercent / 100 * float64(fileBarWidth))
+		if fileFilled < 0 {
+			fileFilled = 0
+		}
+		if fileFilled > fileBarWidth {
+			fileFilled = fileBarWidth
+		}
 		fileBar := strings.Repeat("█", fileFilled) + strings.Repeat("░", fileBarWidth-fileFilled)
 
 		lines = append(lines, fmt.Sprintf(
@@ -166,6 +172,12 @@ func (pt *ProgressTracker) render() {
 	// Progress bar at the bottom
 	barWidth := 60
 	filled := int(percent / 100 * float64(barWidth))
+	if filled < 0 {
+		filled = 0
+	}
+	if filled > barWidth {
+		filled = barWidth
+	}
 	bar := strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled)
 	lines = append(lines, fmt.Sprintf("\033[K[%s]", bar))
 
