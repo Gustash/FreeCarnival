@@ -305,11 +305,12 @@ func TestDownloader_InfoOnly(t *testing.T) {
 0,test.txt,prefix_0_sha123
 `
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/manifest.csv" {
+		switch r.URL.Path {
+		case "/manifest.csv":
 			w.Write([]byte(buildManifestCSV))
-		} else if r.URL.Path == "/chunks.csv" {
+		case "/chunks.csv":
 			w.Write([]byte(chunksManifestCSV))
-		} else {
+		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))

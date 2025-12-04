@@ -137,7 +137,7 @@ func (d *Downloader) Download(ctx context.Context, installPath string) error {
 	}
 
 	// Start download workers and file writers
-	err = d.downloadAndWrite(ctx, installPath, fileChunks, fileInfoMap)
+	err = d.downloadAndWrite(ctx, fileChunks, fileInfoMap)
 
 	if err != nil {
 		d.progress.Abort()
@@ -219,7 +219,7 @@ func (d *Downloader) groupChunksByFile(chunks []BuildManifestChunksRecord, fileI
 	return fileChunks
 }
 
-func (d *Downloader) downloadAndWrite(ctx context.Context, installPath string, fileChunks map[int][]BuildManifestChunksRecord, fileInfoMap map[string]*fileInfo) error {
+func (d *Downloader) downloadAndWrite(ctx context.Context, fileChunks map[int][]BuildManifestChunksRecord, fileInfoMap map[string]*fileInfo) error {
 	// Create channels
 	chunkJobs := make(chan ChunkDownload, d.options.MaxDownloadWorkers*4)
 
