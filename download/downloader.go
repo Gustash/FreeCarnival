@@ -431,7 +431,7 @@ func (d *Downloader) singleFileWriter(ctx context.Context, info *fileInfo, chunk
 
 			if chunkIdx == nextChunkIndex {
 				// Write this chunk and any pending sequential chunks
-				if err := d.writeChunkBuffered(bw, result.Data, info.FullPath); err != nil {
+				if err := d.writeChunkBuffered(bw, result.Data, info.Index, info.FullPath); err != nil {
 					return err
 				}
 				nextChunkIndex++
@@ -442,7 +442,7 @@ func (d *Downloader) singleFileWriter(ctx context.Context, info *fileInfo, chunk
 					if !exists {
 						break
 					}
-					if err := d.writeChunkBuffered(bw, pendingData, info.FullPath); err != nil {
+					if err := d.writeChunkBuffered(bw, pendingData, info.Index, info.FullPath); err != nil {
 						return err
 					}
 					delete(pendingChunks, nextChunkIndex)
@@ -468,7 +468,7 @@ func (d *Downloader) singleFileWriter(ctx context.Context, info *fileInfo, chunk
 	}
 }
 
-func (d *Downloader) writeChunkBuffered(bw *bufio.Writer, data []byte, filePath string) error {
+func (d *Downloader) writeChunkBuffered(bw *bufio.Writer, data []byte, fileIndex int, filePath string) error {
 	if _, err := bw.Write(data); err != nil {
 		d.releaseMemory(int64(len(data)))
 		return fmt.Errorf("failed to write to %s: %w", filePath, err)
@@ -478,7 +478,7 @@ func (d *Downloader) writeChunkBuffered(bw *bufio.Writer, data []byte, filePath 
 
 	// Track disk write progress
 	if d.progress != nil {
-		d.progress.ChunkWritten(0, chunkSize) // fileIndex not needed for overall tracking
+		d.progress.ChunkWritten(fileIndex, chunkSize)
 	}
 	return nil
 }
