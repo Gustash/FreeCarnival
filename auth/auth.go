@@ -86,9 +86,9 @@ func loginWithURL(ctx context.Context, targetURL, email, password string, saveSe
 
 		// Save session to disk (only in production, not tests)
 		if saveSession {
-			sess := &Session{Cookies: cookies}
-			if err := SaveSession(sess); err != nil {
-				return nil, nil, fmt.Errorf("login succeeded but saving session failed: %w", err)
+		sess := &Session{Cookies: cookies}
+		if err := SaveSession(sess); err != nil {
+			return nil, nil, fmt.Errorf("login succeeded but saving session failed: %w", err)
 			}
 		}
 
