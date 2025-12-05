@@ -113,8 +113,9 @@ func newLogoutCmd() *cobra.Command {
 
 func newSyncCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "sync",
-		Short: "Sync library with IndieGala",
+		Use:     "library",
+		Aliases: []string{"sync"},
+		Short:   "Sync library with IndieGala",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client, _, err := auth.LoadSessionClient()
 			if err != nil {
