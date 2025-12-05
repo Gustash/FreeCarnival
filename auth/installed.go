@@ -149,3 +149,20 @@ func LoadManifest(slug, version, manifestType string) ([]byte, error) {
 
 	return data, nil
 }
+
+// RemoveManifests removes all saved manifests for a game
+func RemoveManifests(slug string) error {
+	dir, err := manifestDir()
+	if err != nil {
+		return err
+	}
+
+	slugDir := filepath.Join(dir, slug)
+
+	// Check if directory exists
+	if _, err := os.Stat(slugDir); os.IsNotExist(err) {
+		return nil // Nothing to remove
+	}
+
+	return os.RemoveAll(slugDir)
+}

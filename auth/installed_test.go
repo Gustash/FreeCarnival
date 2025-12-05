@@ -234,3 +234,44 @@ func TestSaveManifest_CreatesDirectoryStructure(t *testing.T) {
 		t.Errorf("expected manifest file at %s", expectedPath)
 	}
 }
+
+func TestRemoveManifests(t *testing.T) {
+	testDir := t.TempDir()
+	SetTestConfigDir(testDir)
+	defer SetTestConfigDir("")
+
+	// Save some manifests for a game
+	if err := SaveManifest("test-game", "1.0", "manifest", []byte("manifest data")); err != nil {
+		t.Fatalf("SaveManifest failed: %v", err)
+	}
+	if err := SaveManifest("test-game", "1.0", "manifest_chunks", []byte("chunks data")); err != nil {
+		t.Fatalf("SaveManifest failed: %v", err)
+	}
+
+	// Verify manifests exist
+	manifestDir := filepath.Join(testDir, "manifests", "test-game")
+	if _, err := os.Stat(manifestDir); os.IsNotExist(err) {
+		t.Fatalf("manifests directory should exist")
+	}
+
+	// Remove manifests
+	if err := RemoveManifests("test-game"); err != nil {
+		t.Fatalf("RemoveManifests failed: %v", err)
+	}
+
+	// Verify manifests are gone
+	if _, err := os.Stat(manifestDir); !os.IsNotExist(err) {
+		t.Error("manifests directory should be removed")
+	}
+}
+
+func TestRemoveManifests_NotExists(t *testing.T) {
+	testDir := t.TempDir()
+	SetTestConfigDir(testDir)
+	defer SetTestConfigDir("")
+
+	// Removing manifests for a game that doesn't exist should not error
+	if err := RemoveManifests("nonexistent-game"); err != nil {
+		t.Errorf("RemoveManifests should not error for nonexistent game: %v", err)
+	}
+}
