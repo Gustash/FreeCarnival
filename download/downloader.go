@@ -3,6 +3,7 @@ package download
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -484,9 +485,50 @@ func (d *Downloader) writeChunkBuffered(bw *bufio.Writer, data []byte, fileIndex
 	return nil
 }
 
+const (
+	maxRetries     = 3
+	retryBaseDelay = 500 * time.Millisecond
+)
+
 func (d *Downloader) downloadChunk(ctx context.Context, fileIndex int, chunkSHA string) ([]byte, error) {
 	url := GetChunkURL(d.product, d.version.OS, chunkSHA)
 
+	var lastErr error
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			// Exponential backoff: 500ms, 1s, 2s
+			delay := retryBaseDelay * time.Duration(1<<(attempt-1))
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(delay):
+			}
+		}
+
+		data, err := d.doDownloadChunk(ctx, url)
+		if err == nil {
+			// Update progress tracker
+			if d.progress != nil {
+				d.progress.ChunkDownloaded(fileIndex, int64(len(data)))
+			}
+			return data, nil
+		}
+
+		lastErr = err
+
+		// Don't retry on context cancellation or 4xx errors
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if !isRetryableError(err) {
+			return nil, err
+		}
+	}
+
+	return nil, fmt.Errorf("after %d retries: %w", maxRetries, lastErr)
+}
+
+func (d *Downloader) doDownloadChunk(ctx context.Context, url string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -500,7 +542,7 @@ func (d *Downloader) downloadChunk(ctx context.Context, fileIndex int, chunkSHA 
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP %d downloading chunk %s", resp.StatusCode, chunkSHA)
+		return nil, &httpError{StatusCode: resp.StatusCode}
 	}
 
 	data, err := io.ReadAll(resp.Body)
@@ -508,12 +550,47 @@ func (d *Downloader) downloadChunk(ctx context.Context, fileIndex int, chunkSHA 
 		return nil, err
 	}
 
-	// Update progress tracker
-	if d.progress != nil {
-		d.progress.ChunkDownloaded(fileIndex, int64(len(data)))
+	return data, nil
+}
+
+type httpError struct {
+	StatusCode int
+}
+
+func (e *httpError) Error() string {
+	return fmt.Sprintf("HTTP %d", e.StatusCode)
+}
+
+// isRetryableError returns true if the error is transient and worth retrying
+func isRetryableError(err error) bool {
+	if err == nil {
+		return false
 	}
 
-	return data, nil
+	// HTTP 5xx errors are retryable
+	var httpErr *httpError
+	if errors.As(err, &httpErr) {
+		return httpErr.StatusCode >= 500
+	}
+
+	// Network errors, timeouts, and HTTP/2 stream errors are retryable
+	errStr := err.Error()
+	if strings.Contains(errStr, "stream error") ||
+		strings.Contains(errStr, "INTERNAL_ERROR") ||
+		strings.Contains(errStr, "connection reset") ||
+		strings.Contains(errStr, "broken pipe") ||
+		strings.Contains(errStr, "timeout") ||
+		strings.Contains(errStr, "EOF") {
+		return true
+	}
+
+	// Check for net.Error (timeout, temporary)
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return netErr.Timeout()
+	}
+
+	return false
 }
 
 func (d *Downloader) waitForMemory(ctx context.Context, size int64) {
