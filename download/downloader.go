@@ -3,8 +3,6 @@ package download
 import (
 	"bufio"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"net"
@@ -93,9 +91,14 @@ func NewDownloader(client *http.Client, product *auth.Product, version *auth.Pro
 func (d *Downloader) Download(ctx context.Context, installPath string) error {
 	// Fetch manifests
 	fmt.Println("Fetching build manifest...")
-	buildManifest, err := FetchBuildManifest(ctx, d.client, d.product, d.version)
+	buildManifest, manifestData, err := FetchBuildManifest(ctx, d.client, d.product, d.version)
 	if err != nil {
 		return fmt.Errorf("failed to fetch build manifest: %w", err)
+	}
+
+	// Save manifest for later verification
+	if err := auth.SaveManifest(d.product.SluggedName, d.version.Version, "manifest", manifestData); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to save manifest: %v\n", err)
 	}
 
 	fmt.Println("Fetching chunks manifest...")
@@ -360,11 +363,9 @@ func (d *Downloader) downloadWorkerWithRouting(ctx context.Context, jobs <-chan 
 
 			if err == nil && !d.options.SkipVerify {
 				// Verify chunk SHA
-				hash := sha256.Sum256(data)
-				actualSHA := hex.EncodeToString(hash[:])
 				expectedSHA := extractSHA(job.ChunkSHA)
-				if actualSHA != expectedSHA {
-					result.Error = fmt.Errorf("SHA mismatch for chunk %s: expected %s, got %s", job.ChunkSHA, expectedSHA, actualSHA)
+				if !VerifyChunk(data, expectedSHA) {
+					result.Error = fmt.Errorf("SHA mismatch for chunk %s", job.ChunkSHA)
 					result.Data = nil
 					d.releaseMemory(int64(len(data)))
 				}

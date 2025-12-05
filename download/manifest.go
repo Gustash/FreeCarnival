@@ -15,7 +15,8 @@ import (
 )
 
 // FetchBuildManifest downloads and parses the build manifest for a product version
-func FetchBuildManifest(ctx context.Context, client *http.Client, product *auth.Product, version *auth.ProductVersion) ([]BuildManifestRecord, error) {
+// Returns the parsed records and the raw CSV data for caching
+func FetchBuildManifest(ctx context.Context, client *http.Client, product *auth.Product, version *auth.ProductVersion) ([]BuildManifestRecord, []byte, error) {
 	url := fmt.Sprintf("%s/DevShowCaseSourceVolume/dev_fold_%s/%s/%s/%s_manifest.csv",
 		ContentURL,
 		product.Namespace,
@@ -26,10 +27,15 @@ func FetchBuildManifest(ctx context.Context, client *http.Client, product *auth.
 
 	data, err := fetchCSV(ctx, client, url)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch build manifest: %w", err)
+		return nil, nil, fmt.Errorf("failed to fetch build manifest: %w", err)
 	}
 
-	return parseBuildManifest(data)
+	records, err := parseBuildManifest(data)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return records, data, nil
 }
 
 // FetchChunksManifest downloads and parses the chunks manifest for a product version
@@ -197,4 +203,3 @@ func normalizePath(path string) string {
 	// Then convert to OS-appropriate separator
 	return filepath.FromSlash(path)
 }
-

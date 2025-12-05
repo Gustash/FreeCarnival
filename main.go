@@ -30,6 +30,7 @@ func main() {
 	rootCmd.AddCommand(newLoginCmd())
 	rootCmd.AddCommand(newSyncCmd())
 	rootCmd.AddCommand(newInstallCmd())
+	rootCmd.AddCommand(newVerifyCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -255,6 +256,16 @@ the latest version for the current OS will be used.`,
 			}
 
 			if !infoOnly {
+				// Save install info for later verification/updates
+				installInfo := &auth.InstallInfo{
+					InstallPath: installPath,
+					Version:     productVersion.Version,
+					OS:          productVersion.OS,
+				}
+				if err := auth.AddInstalled(slug, installInfo); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to save install info: %v\n", err)
+				}
+
 				fmt.Printf("\nInstallation complete: %s\n", installPath)
 			}
 
@@ -270,6 +281,73 @@ the latest version for the current OS will be used.`,
 	cmd.Flags().IntVar(&maxMemoryUsage, "max-memory", download.DefaultMaxMemoryUsage, "Maximum memory usage for buffering chunks (bytes)")
 	cmd.Flags().BoolVarP(&infoOnly, "info", "i", false, "Show download info without downloading")
 	cmd.Flags().BoolVar(&skipVerify, "skip-verify", false, "Skip SHA verification of downloaded chunks")
+
+	return cmd
+}
+
+func newVerifyCmd() *cobra.Command {
+	var verbose bool
+
+	cmd := &cobra.Command{
+		Use:   "verify <slug>",
+		Short: "Verify file integrity for an installed game",
+		Long: `Verify the integrity of an installed game by checking all file hashes
+against the manifest. This ensures no files are corrupted or modified.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			slug := args[0]
+
+			// Check if game is installed
+			installInfo, err := auth.GetInstalled(slug)
+			if err != nil {
+				return fmt.Errorf("failed to check installed games: %w", err)
+			}
+			if installInfo == nil {
+				return fmt.Errorf("%s is not installed", slug)
+			}
+
+			fmt.Printf("Verifying %s (v%s, %s) at %s...\n",
+				slug, installInfo.Version, installInfo.OS, installInfo.InstallPath)
+
+			opts := download.VerifyOptions{
+				Verbose: verbose,
+			}
+
+			valid, results, err := download.VerifyInstallation(slug, installInfo, opts)
+			if err != nil {
+				return fmt.Errorf("verification failed: %w", err)
+			}
+
+			// Print summary
+			var failed []download.VerifyResult
+			for _, r := range results {
+				if !r.Valid {
+					failed = append(failed, r)
+				}
+			}
+
+			fmt.Printf("\nVerified %d files\n", len(results))
+
+			if valid {
+				fmt.Printf("%s passed verification.\n", slug)
+				return nil
+			}
+
+			fmt.Printf("\n%d files failed verification:\n", len(failed))
+			for _, r := range failed {
+				if r.Error != nil {
+					fmt.Printf("  %s: %v\n", r.FilePath, r.Error)
+				} else {
+					fmt.Printf("  %s: hash mismatch\n", r.FilePath)
+				}
+			}
+			fmt.Printf("\n%s is corrupted. Please reinstall.\n", slug)
+
+			return fmt.Errorf("verification failed")
+		},
+	}
+
+	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show progress for each file")
 
 	return cmd
 }

@@ -19,6 +19,12 @@ type Session struct {
 // testConfigDir can be set during tests to override the config directory
 var testConfigDir string
 
+// SetTestConfigDir sets the config directory for testing purposes.
+// Pass empty string to reset to default behavior.
+func SetTestConfigDir(dir string) {
+	testConfigDir = dir
+}
+
 // configDir returns something like ~/.config/FreeCarnival
 func configDir() (string, error) {
 	if testConfigDir != "" {
