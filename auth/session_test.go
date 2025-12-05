@@ -203,3 +203,71 @@ func TestSession_EmptyCookies(t *testing.T) {
 	}
 }
 
+func TestClearSession_Success(t *testing.T) {
+	cleanup := setupTestConfigDir(t)
+	defer cleanup()
+
+	// First save a session
+	sess := &Session{
+		Cookies: []*http.Cookie{
+			{Name: "auth_token", Value: "test_token"},
+		},
+	}
+	if err := SaveSession(sess); err != nil {
+		t.Fatalf("SaveSession failed: %v", err)
+	}
+
+	// Verify session exists
+	path := filepath.Join(testConfigDir, "session.json")
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		t.Fatal("session file should exist before clearing")
+	}
+
+	// Clear session
+	if err := ClearSession(); err != nil {
+		t.Fatalf("ClearSession failed: %v", err)
+	}
+
+	// Verify session is gone
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Error("session file should not exist after clearing")
+	}
+
+	// LoadSessionClient should now fail
+	_, _, err := LoadSessionClient()
+	if err == nil {
+		t.Error("expected error when loading cleared session")
+	}
+}
+
+func TestClearSession_NoSession(t *testing.T) {
+	cleanup := setupTestConfigDir(t)
+	defer cleanup()
+
+	// Clear session when none exists should succeed (idempotent)
+	if err := ClearSession(); err != nil {
+		t.Errorf("ClearSession should succeed even when no session exists: %v", err)
+	}
+}
+
+func TestClearSession_MultipleTimes(t *testing.T) {
+	cleanup := setupTestConfigDir(t)
+	defer cleanup()
+
+	// Save a session
+	sess := &Session{
+		Cookies: []*http.Cookie{
+			{Name: "auth_token", Value: "test_token"},
+		},
+	}
+	if err := SaveSession(sess); err != nil {
+		t.Fatalf("SaveSession failed: %v", err)
+	}
+
+	// Clear multiple times should all succeed
+	for i := 0; i < 3; i++ {
+		if err := ClearSession(); err != nil {
+			t.Errorf("ClearSession #%d failed: %v", i+1, err)
+		}
+	}
+}

@@ -28,6 +28,7 @@ func main() {
 	}
 
 	rootCmd.AddCommand(newLoginCmd())
+	rootCmd.AddCommand(newLogoutCmd())
 	rootCmd.AddCommand(newSyncCmd())
 	rootCmd.AddCommand(newInstallCmd())
 	rootCmd.AddCommand(newVerifyCmd())
@@ -93,6 +94,21 @@ func newLoginCmd() *cobra.Command {
 	cmd.MarkFlagRequired("password")
 
 	return cmd
+}
+
+func newLogoutCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "logout",
+		Short: "Log out from your IndieGala account",
+		Long:  "Removes the saved session, effectively logging you out. You will need to log in again to use authenticated commands.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := auth.ClearSession(); err != nil {
+				return fmt.Errorf("failed to clear session: %w", err)
+			}
+			fmt.Println("Logged out successfully.")
+			return nil
+		},
+	}
 }
 
 func newSyncCmd() *cobra.Command {
