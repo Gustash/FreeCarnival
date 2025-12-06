@@ -61,6 +61,6 @@ go run . -- ARGS
 - [x] Game launching (native + Wine)
 - [x] Update checking (list-updates)
 - [x] Retry logic for download failures
+- [x] Pause/Resume downloads
 - [ ] Update command (download delta/full updates)
-- [ ] Pause/Resume downloads
 - [ ] Better logging

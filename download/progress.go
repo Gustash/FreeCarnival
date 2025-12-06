@@ -222,6 +222,12 @@ func (pt *ProgressTracker) ChunkDownloaded(fileIndex int, chunkSize int64) {
 	pt.downloadedBytes.Add(chunkSize)
 }
 
+// AddDownloadedBytes adds already-downloaded bytes (for resume)
+func (pt *ProgressTracker) AddDownloadedBytes(bytes int64) {
+	pt.downloadedBytes.Add(bytes)
+	pt.writtenBytes.Add(bytes)
+}
+
 // ChunkWritten records that a chunk was written to disk
 func (pt *ProgressTracker) ChunkWritten(fileIndex int, chunkSize int64) {
 	pt.writtenBytes.Add(chunkSize)

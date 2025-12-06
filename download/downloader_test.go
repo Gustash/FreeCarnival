@@ -421,7 +421,7 @@ func TestSingleFileWriter_EmptyFile(t *testing.T) {
 	chunks := make(chan DownloadedChunk)
 	close(chunks)
 
-	err := d.singleFileWriter(context.Background(), info, chunks, []BuildManifestChunksRecord{})
+	err := d.singleFileWriter(context.Background(), info, chunks, []BuildManifestChunksRecord{}, 0, false)
 	if err != nil {
 		t.Errorf("singleFileWriter failed for empty file: %v", err)
 	}
@@ -460,7 +460,7 @@ func TestSingleFileWriter_Success(t *testing.T) {
 	chunks <- DownloadedChunk{FileIndex: 0, ChunkIndex: 2, Data: []byte("chunk2")}
 	close(chunks)
 
-	err = d.singleFileWriter(context.Background(), info, chunks, chunkManifest)
+	err = d.singleFileWriter(context.Background(), info, chunks, chunkManifest, 0, false)
 	if err != nil {
 		t.Fatalf("singleFileWriter failed: %v", err)
 	}
@@ -510,7 +510,7 @@ func TestSingleFileWriter_OutOfOrderChunks(t *testing.T) {
 	chunks <- DownloadedChunk{FileIndex: 0, ChunkIndex: 1, Data: []byte("chunk1")}
 	close(chunks)
 
-	err = d.singleFileWriter(context.Background(), info, chunks, chunkManifest)
+	err = d.singleFileWriter(context.Background(), info, chunks, chunkManifest, 0, false)
 	if err != nil {
 		t.Fatalf("singleFileWriter failed: %v", err)
 	}
@@ -557,7 +557,7 @@ func TestSingleFileWriter_ChunkError(t *testing.T) {
 	chunks <- DownloadedChunk{FileIndex: 0, ChunkIndex: 0, Data: nil, Error: io.ErrUnexpectedEOF}
 	close(chunks)
 
-	err = d.singleFileWriter(context.Background(), info, chunks, chunkManifest)
+	err = d.singleFileWriter(context.Background(), info, chunks, chunkManifest, 0, false)
 	if err == nil {
 		t.Error("expected error when chunk has error")
 	}

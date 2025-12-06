@@ -34,7 +34,6 @@ func configDir() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	fmt.Fprintf(os.Stdout, "Config dir: %s\n", dir)
 	return filepath.Join(dir, "FreeCarnival"), nil
 }
 

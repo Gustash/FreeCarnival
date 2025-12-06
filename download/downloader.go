@@ -132,6 +132,70 @@ func (d *Downloader) Download(ctx context.Context, installPath string) error {
 	// Group chunks by file
 	fileChunks := d.groupChunksByFile(chunksManifest, fileInfoMap)
 
+	// Check for existing files (resume support)
+	var resumeState *ResumeState
+	if hasExistingFiles(fileInfoMap) {
+		fmt.Println("Found existing files, checking for resume...")
+		checker := NewResumeChecker(installPath, fileInfoMap, fileChunks, d.options.MaxDownloadWorkers)
+		resumeState, err = checker.CheckExistingFiles()
+		if err != nil {
+			return fmt.Errorf("failed to check existing files: %w", err)
+		}
+
+		// Delete corrupted files so they can be re-downloaded
+		for fileIndex := range resumeState.CorruptedFiles {
+			for _, info := range fileInfoMap {
+				if info.Index == fileIndex {
+					fmt.Printf("Removing corrupted file: %s\n", info.Record.FileName)
+					os.Remove(info.FullPath)
+					break
+				}
+			}
+		}
+
+		// Filter chunks to only download what's needed
+		fileChunks = FilterChunksToDownload(fileChunks, resumeState)
+
+		if len(fileChunks) == 0 {
+			fmt.Println("\nAll files already downloaded and verified!")
+			return nil
+		}
+
+		// Calculate remaining download size
+		var remainingBytes int64
+		var remainingFiles int
+		for fileIndex, chunks := range fileChunks {
+			for _, info := range fileInfoMap {
+				if info.Index == fileIndex {
+					remainingFiles++
+					// Calculate bytes for remaining chunks
+					startChunk := resumeState.StartChunkIndex[fileIndex]
+					totalChunks := info.ChunkCount
+
+					// For each remaining chunk, add its size
+					for i, chunk := range chunks {
+						actualChunkIdx := startChunk + i
+						if actualChunkIdx == totalChunks-1 {
+							// Last chunk may be smaller
+							lastChunkSize := int64(info.Record.SizeInBytes) - int64(totalChunks-1)*MaxChunkSize
+							if lastChunkSize > 0 {
+								remainingBytes += lastChunkSize
+							}
+						} else {
+							remainingBytes += MaxChunkSize
+						}
+						_ = chunk // used for iteration
+					}
+					break
+				}
+			}
+		}
+
+		fmt.Printf("\nResuming download: %s remaining (%d files)\n", formatBytes(remainingBytes), remainingFiles)
+		fmt.Printf("Already downloaded: %s (%d files complete)\n\n",
+			formatBytes(resumeState.BytesAlreadyDownloaded), resumeState.FilesAlreadyComplete)
+	}
+
 	// Create progress tracker
 	d.progress = NewProgressTracker(d.totalBytes, d.totalFiles)
 
@@ -140,8 +204,17 @@ func (d *Downloader) Download(ctx context.Context, installPath string) error {
 		d.progress.AddFile(info.Index, info.Record.FileName, info.ChunkCount, int64(info.Record.SizeInBytes))
 	}
 
+	// If resuming, mark already-completed files and chunks
+	if resumeState != nil {
+		for fileIndex := range resumeState.CompletedFiles {
+			d.progress.FileComplete(fileIndex)
+		}
+		// Add already downloaded bytes to progress
+		d.progress.AddDownloadedBytes(resumeState.BytesAlreadyDownloaded)
+	}
+
 	// Start download workers and file writers
-	err = d.downloadAndWrite(ctx, fileChunks, fileInfoMap)
+	err = d.downloadAndWrite(ctx, fileChunks, fileInfoMap, resumeState)
 
 	if err != nil {
 		d.progress.Abort()
@@ -223,7 +296,7 @@ func (d *Downloader) groupChunksByFile(chunks []BuildManifestChunksRecord, fileI
 	return fileChunks
 }
 
-func (d *Downloader) downloadAndWrite(ctx context.Context, fileChunks map[int][]BuildManifestChunksRecord, fileInfoMap map[string]*fileInfo) error {
+func (d *Downloader) downloadAndWrite(ctx context.Context, fileChunks map[int][]BuildManifestChunksRecord, fileInfoMap map[string]*fileInfo, resumeState *ResumeState) error {
 	// Create channels
 	chunkJobs := make(chan ChunkDownload, d.options.MaxDownloadWorkers*4)
 
@@ -244,19 +317,35 @@ func (d *Downloader) downloadAndWrite(ctx context.Context, fileChunks map[int][]
 	var downloadWg sync.WaitGroup
 	var writerWg sync.WaitGroup
 
-	// Start per-file writer goroutines
+	// Start per-file writer goroutines (only for files that need downloading)
 	for _, info := range fileInfoMap {
+		chunks := fileChunks[info.Index]
+		if len(chunks) == 0 {
+			continue // Skip files with no chunks to download
+		}
+
+		// Determine if we're resuming this file
+		var startChunkIdx int
+		appendMode := false
+		if resumeState != nil {
+			if resumeState.CompletedFiles[info.Index] {
+				continue // Skip completed files
+			}
+			startChunkIdx = resumeState.StartChunkIndex[info.Index]
+			appendMode = startChunkIdx > 0 && !resumeState.CorruptedFiles[info.Index]
+		}
+
 		writerWg.Add(1)
-		go func(info *fileInfo) {
+		go func(info *fileInfo, chunks []BuildManifestChunksRecord, startIdx int, append bool) {
 			defer writerWg.Done()
-			if err := d.singleFileWriter(ctx, info, fileChannels[info.Index], fileChunks[info.Index]); err != nil {
+			if err := d.singleFileWriter(ctx, info, fileChannels[info.Index], chunks, startIdx, append); err != nil {
 				select {
 				case errChan <- err:
 				default:
 				}
 				cancel()
 			}
-		}(info)
+		}(info, chunks, startChunkIdx, appendMode)
 	}
 
 	// Start download workers
@@ -387,7 +476,7 @@ func (d *Downloader) downloadWorkerWithRouting(ctx context.Context, jobs <-chan 
 }
 
 // singleFileWriter handles writing chunks for a single file in order
-func (d *Downloader) singleFileWriter(ctx context.Context, info *fileInfo, chunks <-chan DownloadedChunk, chunkManifest []BuildManifestChunksRecord) error {
+func (d *Downloader) singleFileWriter(ctx context.Context, info *fileInfo, chunks <-chan DownloadedChunk, chunkManifest []BuildManifestChunksRecord, startChunkIdx int, appendMode bool) error {
 	totalChunks := len(chunkManifest)
 	if totalChunks == 0 {
 		return nil
@@ -397,10 +486,20 @@ func (d *Downloader) singleFileWriter(ctx context.Context, info *fileInfo, chunk
 	pendingChunks := make(map[int][]byte)
 	nextChunkIndex := 0
 
-	// Open the file
-	f, err := os.Create(info.FullPath)
+	// Open the file (append mode for resumed downloads)
+	var f *os.File
+	var err error
+	if appendMode {
+		f, err = os.OpenFile(info.FullPath, os.O_WRONLY|os.O_APPEND, 0o644)
+		if err != nil {
+			// Fallback to create mode if append fails
+			f, err = os.Create(info.FullPath)
+		}
+	} else {
+		f, err = os.Create(info.FullPath)
+	}
 	if err != nil {
-		return fmt.Errorf("failed to create file %s: %w", info.FullPath, err)
+		return fmt.Errorf("failed to open file %s: %w", info.FullPath, err)
 	}
 	defer f.Close()
 

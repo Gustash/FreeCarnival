@@ -85,6 +85,25 @@ the latest version for the current OS will be used.`,
 				installPath = filepath.Join(defaultInstallBasePath(), slug)
 			}
 
+			// Check if already installed (skip for --info)
+			if !infoOnly {
+				existingInstall, err := auth.GetInstalled(slug)
+				if err != nil {
+					return fmt.Errorf("failed to check installed games: %w", err)
+				}
+				if existingInstall != nil {
+					if existingInstall.Version == productVersion.Version && existingInstall.OS == productVersion.OS {
+						fmt.Printf("%s v%s (%s) is already installed at %s\n",
+							product.Name, existingInstall.Version, existingInstall.OS, existingInstall.InstallPath)
+						fmt.Println("Run 'verify' to check file integrity, or 'uninstall' first to reinstall.")
+						return nil
+					}
+					// Different version/OS - require uninstall first to avoid file conflicts
+					return fmt.Errorf("%s v%s (%s) is already installed at %s\nRun 'uninstall %s' first to install a different version",
+						product.Name, existingInstall.Version, existingInstall.OS, existingInstall.InstallPath, slug)
+				}
+			}
+
 			fmt.Printf("Installing %s v%s (%s) to %s\n", product.Name, productVersion.Version, productVersion.OS, installPath)
 
 			// Load session for authenticated downloads
