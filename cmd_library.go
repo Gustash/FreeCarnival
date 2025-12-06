@@ -2,9 +2,9 @@ package main
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/gustash/freecarnival/auth"
+	"github.com/gustash/freecarnival/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -50,7 +50,7 @@ Use --installed to show only installed games without syncing.`,
 
 			ui, products, err := auth.FetchUserInfo(cmd.Context(), client)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "sync failed: %v\n", err)
+				logger.Error("Sync failed", "error", err)
 				return err
 			}
 

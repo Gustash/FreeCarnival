@@ -8,6 +8,7 @@ import (
 
 	"github.com/gustash/freecarnival/auth"
 	"github.com/gustash/freecarnival/download"
+	"github.com/gustash/freecarnival/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -101,9 +102,12 @@ the latest version for the current OS will be used.`,
 				}
 				if existingInstall != nil {
 					if existingInstall.Version == productVersion.Version && existingInstall.OS == productVersion.OS {
-						fmt.Printf("%s v%s (%s) is already installed at %s\n",
-							product.Name, existingInstall.Version, existingInstall.OS, existingInstall.InstallPath)
-						fmt.Println("Run 'verify' to check file integrity, or 'uninstall' first to reinstall.")
+						logger.Info("Game already installed",
+							"name", product.Name,
+							"version", existingInstall.Version,
+							"os", existingInstall.OS,
+							"path", existingInstall.InstallPath)
+						logger.Info("Run 'verify' to check file integrity, or 'uninstall' first to reinstall")
 						return nil
 					}
 					// Different version/OS - require uninstall first to avoid file conflicts
@@ -112,7 +116,11 @@ the latest version for the current OS will be used.`,
 				}
 			}
 
-			fmt.Printf("Installing %s v%s (%s) to %s\n", product.Name, productVersion.Version, productVersion.OS, installPath)
+			logger.Info("Installing game",
+				"name", product.Name,
+				"version", productVersion.Version,
+				"os", productVersion.OS,
+				"path", installPath)
 
 			// Load session for authenticated downloads
 			client, _, err := auth.LoadSessionClient()
@@ -150,10 +158,10 @@ the latest version for the current OS will be used.`,
 					OS:          productVersion.OS,
 				}
 				if err := auth.AddInstalled(slug, installInfo); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: failed to save install info: %v\n", err)
+					logger.Warn("Failed to save install info", "error", err)
 				}
 
-				fmt.Printf("\nInstallation complete: %s\n", installPath)
+				logger.Info("Installation complete", "path", installPath)
 			}
 
 			return nil
@@ -196,12 +204,14 @@ Use --keep-files to only remove the configuration entry without deleting files.`
 				return fmt.Errorf("%s is not installed", slug)
 			}
 
-			fmt.Printf("Uninstalling %s (v%s, %s)...\n",
-				slug, installInfo.Version, installInfo.OS)
+			logger.Info("Uninstalling game",
+				"slug", slug,
+				"version", installInfo.Version,
+				"os", installInfo.OS)
 
 			// Remove game files unless --keep-files is set
 			if !keepFiles {
-				fmt.Printf("Removing files from %s...\n", installInfo.InstallPath)
+				logger.Info("Removing game files", "path", installInfo.InstallPath)
 				if err := os.RemoveAll(installInfo.InstallPath); err != nil {
 					return fmt.Errorf("failed to remove game files: %w", err)
 				}
@@ -212,7 +222,7 @@ Use --keep-files to only remove the configuration entry without deleting files.`
 				return fmt.Errorf("failed to update installed config: %w", err)
 			}
 
-			fmt.Printf("%s has been uninstalled.\n", slug)
+			logger.Info("Uninstall complete", "slug", slug)
 			return nil
 		},
 	}

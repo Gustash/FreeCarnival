@@ -5,6 +5,7 @@ import (
 
 	"github.com/gustash/freecarnival/auth"
 	"github.com/gustash/freecarnival/launch"
+	"github.com/gustash/freecarnival/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -78,20 +79,19 @@ Use --wine to specify a custom Wine path, or --no-wine to disable Wine.`,
 			} else {
 				exe = &executables[0]
 				if len(executables) > 1 {
-					fmt.Printf("Multiple executables found, using first: %s\n", exe.Name)
-					fmt.Println("Use --list to see all, --exe <name> to specify another.")
+					logger.Info("Multiple executables found, using first", "exe", exe.Name)
+					logger.Info("Use --list to see all, --exe <name> to specify another")
 				}
 			}
 
-			fmt.Printf("Launching %s...\n", exe.Name)
-			fmt.Printf("Executable: %s\n", exe.Path)
+			logger.Info("Launching game", "name", exe.Name, "path", exe.Path)
 			if len(gameArgs) > 0 {
-				fmt.Printf("Arguments: %v\n", gameArgs)
+				logger.Debug("Game arguments", "args", gameArgs)
 			}
 
 			// Dry run mode - don't actually launch
 			if dryRun {
-				fmt.Println("\n(dry-run mode, not launching)")
+				logger.Info("Dry-run mode, not launching")
 				return nil
 			}
 

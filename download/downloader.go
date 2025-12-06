@@ -14,6 +14,7 @@ import (
 
 	"github.com/gustash/freecarnival/auth"
 	"github.com/gustash/freecarnival/launch"
+	"github.com/gustash/freecarnival/logger"
 	"github.com/gustash/freecarnival/manifest"
 	"github.com/gustash/freecarnival/progress"
 	"github.com/gustash/freecarnival/verify"
@@ -97,17 +98,17 @@ func New(client *http.Client, product *auth.Product, version *auth.ProductVersio
 
 // Download performs the full download operation.
 func (d *Downloader) Download(ctx context.Context, installPath string) error {
-	fmt.Println("Fetching build manifest...")
+	logger.Info("Fetching build manifest...")
 	buildManifest, manifestData, err := manifest.FetchBuild(ctx, d.client, d.product, d.version)
 	if err != nil {
 		return fmt.Errorf("failed to fetch build manifest: %w", err)
 	}
 
 	if err := auth.SaveManifest(d.product.SluggedName, d.version.Version, "manifest", manifestData); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to save manifest: %v\n", err)
+		logger.Warn("Failed to save manifest", "error", err)
 	}
 
-	fmt.Println("Fetching chunks manifest...")
+	logger.Info("Fetching chunks manifest...")
 	chunksManifest, err := manifest.FetchChunks(ctx, d.client, d.product, d.version)
 	if err != nil {
 		return fmt.Errorf("failed to fetch chunks manifest: %w", err)
@@ -120,7 +121,7 @@ func (d *Downloader) Download(ctx context.Context, installPath string) error {
 		return nil
 	}
 
-	fmt.Printf("Total download size: %s (%d files)\n\n", progress.FormatBytes(d.totalBytes), d.totalFiles)
+	logger.Info("Starting download", "size", progress.FormatBytes(d.totalBytes), "files", d.totalFiles)
 
 	fileInfoMap, err := d.prepareInstallation(installPath, buildManifest)
 	if err != nil {
@@ -137,7 +138,7 @@ func (d *Downloader) Download(ctx context.Context, installPath string) error {
 	if resumeState != nil {
 		fileChunks = FilterChunksToDownload(fileChunks, resumeState)
 		if len(fileChunks) == 0 {
-			fmt.Println("\nAll files already downloaded and verified!")
+			logger.Info("All files already downloaded and verified!")
 			return nil
 		}
 	}
@@ -149,8 +150,8 @@ func (d *Downloader) Download(ctx context.Context, installPath string) error {
 
 	if ctx.Err() == context.Canceled {
 		d.progress.Abort()
-		fmt.Println("\n\nDownload paused. Progress has been saved.")
-		fmt.Println("Run the same install command again to resume from where you left off.")
+		logger.Info("\n\nDownload paused. Progress has been saved.")
+		logger.Info("Run the same install command again to resume from where you left off.")
 		return context.Canceled
 	}
 
@@ -186,7 +187,7 @@ func (d *Downloader) DownloadDelta(ctx context.Context, fileInfoMap map[string]*
 
 	if ctx.Err() == context.Canceled {
 		d.progress.Abort()
-		fmt.Println("\n\nUpdate cancelled.")
+		logger.Info("Update cancelled")
 		return context.Canceled
 	}
 
@@ -268,7 +269,7 @@ func (d *Downloader) checkForResume(fileInfoMap map[string]*FileInfo, fileChunks
 		return nil, nil
 	}
 
-	fmt.Println("Found existing files, checking for resume...")
+	logger.Info("Found existing files, checking for resume...")
 	checker := NewResumeChecker(fileInfoMap, fileChunks, d.options.MaxDownloadWorkers)
 	resumeState, err := checker.CheckExistingFiles()
 	if err != nil {
@@ -278,7 +279,7 @@ func (d *Downloader) checkForResume(fileInfoMap map[string]*FileInfo, fileChunks
 	for fileIndex := range resumeState.CorruptedFiles {
 		for _, info := range fileInfoMap {
 			if info.Index == fileIndex {
-				fmt.Printf("Removing corrupted file: %s\n", info.Record.FileName)
+				logger.Warn("Removing corrupted file", "file", info.Record.FileName)
 				os.Remove(info.FullPath)
 				break
 			}
@@ -286,9 +287,12 @@ func (d *Downloader) checkForResume(fileInfoMap map[string]*FileInfo, fileChunks
 	}
 
 	remainingBytes, remainingFiles := d.calculateRemaining(fileInfoMap, fileChunks, resumeState)
-	fmt.Printf("\nResuming download: %s remaining (%d files)\n", progress.FormatBytes(remainingBytes), remainingFiles)
-	fmt.Printf("Already downloaded: %s (%d files complete)\n\n",
-		progress.FormatBytes(resumeState.BytesAlreadyDownloaded), resumeState.FilesAlreadyComplete)
+	logger.Info("Resuming download",
+		"remaining", progress.FormatBytes(remainingBytes),
+		"files", remainingFiles)
+	logger.Info("Already downloaded",
+		"size", progress.FormatBytes(resumeState.BytesAlreadyDownloaded),
+		"files", resumeState.FilesAlreadyComplete)
 
 	return resumeState, nil
 }
@@ -498,6 +502,7 @@ func (d *Downloader) printDownloadInfo(records []manifest.BuildRecord) {
 		}
 	}
 
+	// This is user-facing formatted output, keep using fmt
 	fmt.Println("\n=== Download Info ===")
 	fmt.Printf("Product: %s\n", d.product.Name)
 	fmt.Printf("Version: %s\n", d.version.Version)

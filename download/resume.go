@@ -7,6 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/gustash/freecarnival/logger"
 	"github.com/gustash/freecarnival/manifest"
 	"github.com/gustash/freecarnival/verify"
 )
@@ -100,7 +101,7 @@ func (rc *ResumeChecker) CheckExistingFiles() (*ResumeState, error) {
 	wg.Wait()
 	close(resultCh)
 
-	fmt.Println()
+	fmt.Println() // Clear the progress line
 
 	var partialFiles, newFiles, corruptedFiles int
 	for result := range resultCh {
@@ -126,8 +127,11 @@ func (rc *ResumeChecker) CheckExistingFiles() (*ResumeState, error) {
 		}
 	}
 
-	fmt.Printf("\nResume analysis: %d complete, %d partial, %d new, %d corrupted\n",
-		state.FilesAlreadyComplete, partialFiles, newFiles, corruptedFiles)
+	logger.Info("Resume analysis",
+		"complete", state.FilesAlreadyComplete,
+		"partial", partialFiles,
+		"new", newFiles,
+		"corrupted", corruptedFiles)
 
 	return state, nil
 }

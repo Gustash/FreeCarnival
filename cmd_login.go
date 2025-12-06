@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/gustash/freecarnival/auth"
+	"github.com/gustash/freecarnival/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -25,34 +26,29 @@ func newLoginCmd() *cobra.Command {
 			_ = client // will be reused later
 
 			if res != nil {
-				fmt.Println("Received cookies:")
+				logger.Debug("Received cookies")
 				for _, c := range res.Cookies {
-					fmt.Printf(
-						"  %s=%s; domain=%s; path=%s; secure=%v; httpOnly=%v\n",
-						c.Name,
-						c.Value,
-						c.Domain,
-						c.Path,
-						c.Secure,
-						c.HttpOnly,
-					)
+					logger.Debug("Cookie",
+						"name", c.Name,
+						"domain", c.Domain,
+						"path", c.Path,
+						"secure", c.Secure,
+						"httpOnly", c.HttpOnly)
 				}
-				fmt.Println()
 			}
 
 			if err != nil {
 				if res != nil {
-					fmt.Fprintf(os.Stderr,
-						"Login failed: message=%q (http=%d)\n",
-						res.Message, res.StatusCode,
-					)
+					logger.Error("Login failed",
+						"message", res.Message,
+						"status", res.StatusCode)
 				} else {
-					fmt.Fprintf(os.Stderr, "Login request error: %v\n", err)
+					logger.Error("Login request error", "error", err)
 				}
 				os.Exit(1)
 			}
 
-			fmt.Println("Login successful.")
+			logger.Info("Login successful")
 			return nil
 		},
 	}
@@ -74,7 +70,7 @@ func newLogoutCmd() *cobra.Command {
 			if err := auth.ClearSession(); err != nil {
 				return fmt.Errorf("failed to clear session: %w", err)
 			}
-			fmt.Println("Logged out successfully.")
+			logger.Info("Logged out successfully")
 			return nil
 		},
 	}

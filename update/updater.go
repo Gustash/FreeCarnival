@@ -10,6 +10,7 @@ import (
 
 	"github.com/gustash/freecarnival/auth"
 	"github.com/gustash/freecarnival/download"
+	"github.com/gustash/freecarnival/logger"
 	"github.com/gustash/freecarnival/manifest"
 	"github.com/gustash/freecarnival/progress"
 )
@@ -39,7 +40,7 @@ func New(client *http.Client, product *auth.Product, oldVersion, newVersion *aut
 // Update performs the update operation.
 func (u *Updater) Update(ctx context.Context) error {
 	// Load old manifest
-	fmt.Println("Loading old manifest...")
+	logger.Info("Loading old manifest...")
 	oldManifestData, err := auth.LoadManifest(u.product.SluggedName, u.oldVersion.Version, "manifest")
 	if err != nil {
 		return fmt.Errorf("failed to load old manifest: %w (try reinstalling)", err)
@@ -51,26 +52,26 @@ func (u *Updater) Update(ctx context.Context) error {
 	}
 
 	// Fetch new manifest
-	fmt.Println("Fetching new build manifest...")
+	logger.Info("Fetching new build manifest...")
 	newManifest, newManifestData, err := manifest.FetchBuild(ctx, u.client, u.product, u.newVersion)
 	if err != nil {
 		return fmt.Errorf("failed to fetch new build manifest: %w", err)
 	}
 
 	if err := auth.SaveManifest(u.product.SluggedName, u.newVersion.Version, "manifest", newManifestData); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to save manifest: %v\n", err)
+		logger.Warn("Failed to save manifest", "error", err)
 	}
 
 	// Generate delta
-	fmt.Println("Calculating changes...")
+	logger.Info("Calculating changes...")
 	delta := GenerateDelta(oldManifest, newManifest)
 
 	if delta.IsEmpty() {
-		fmt.Println("No changes detected. Game is already up to date!")
+		logger.Info("No changes detected. Game is already up to date!")
 		return nil
 	}
 
-	fmt.Println("\nUpdate summary:")
+	logger.Info("Update summary:")
 	delta.PrintSummary()
 	fmt.Println()
 
@@ -80,7 +81,7 @@ func (u *Updater) Update(ctx context.Context) error {
 	}
 
 	// Fetch chunks for new/modified files
-	fmt.Println("Fetching chunks manifest...")
+	logger.Info("Fetching chunks manifest...")
 	newChunks, err := manifest.FetchChunks(ctx, u.client, u.product, u.newVersion)
 	if err != nil {
 		return fmt.Errorf("failed to fetch chunks manifest: %w", err)
@@ -90,6 +91,7 @@ func (u *Updater) Update(ctx context.Context) error {
 	deltaChunks := FilterChunksForDelta(newChunks, delta)
 
 	// Remove modified and removed files
+	logger.Debug("Cleaning up modified and removed files...")
 	if err := u.cleanupFiles(delta); err != nil {
 		return err
 	}
@@ -108,7 +110,7 @@ func (u *Updater) cleanupFiles(delta *DeltaManifest) error {
 			continue
 		}
 		filePath := filepath.Join(u.installPath, record.FileName)
-		fmt.Printf("Removing modified file: %s\n", record.FileName)
+		logger.Debug("Removing modified file", "file", record.FileName)
 		if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("failed to remove %s: %w", filePath, err)
 		}
@@ -117,7 +119,7 @@ func (u *Updater) cleanupFiles(delta *DeltaManifest) error {
 	// Remove deleted files and directories
 	for _, record := range delta.Removed {
 		filePath := filepath.Join(u.installPath, record.FileName)
-		fmt.Printf("Removing deleted file: %s\n", record.FileName)
+		logger.Debug("Removing deleted file", "file", record.FileName)
 
 		if record.IsDirectory() {
 			if err := os.RemoveAll(filePath); err != nil && !os.IsNotExist(err) {
@@ -145,11 +147,11 @@ func (u *Updater) downloadDelta(ctx context.Context, deltaManifest []manifest.Bu
 	}
 
 	if totalFiles == 0 {
-		fmt.Println("No files to download.")
+		logger.Info("No files to download")
 		return nil
 	}
 
-	fmt.Printf("Downloading %s (%d files)\n\n", progress.FormatBytes(totalBytes), totalFiles)
+	logger.Info("Starting download", "size", progress.FormatBytes(totalBytes), "files", totalFiles)
 
 	// Prepare installation (create directories, empty files)
 	fileInfoMap, err := u.prepareInstallation(deltaManifest)
@@ -162,7 +164,7 @@ func (u *Updater) downloadDelta(ctx context.Context, deltaManifest []manifest.Bu
 
 	// Create a temporary downloader for the delta
 	downloader := download.New(u.client, u.product, u.newVersion, u.options)
-	
+
 	// Use the downloader's internal methods (we'll need to expose these or duplicate)
 	return downloader.DownloadDelta(ctx, fileInfoMap, fileChunks, totalBytes, totalFiles)
 }
@@ -255,4 +257,3 @@ func (u *Updater) printUpdateInfo(delta *DeltaManifest) {
 		fmt.Printf("Disk Space Freed: %s\n", progress.FormatBytes(-netDiskChange))
 	}
 }
-

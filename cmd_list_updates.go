@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/gustash/freecarnival/auth"
+	"github.com/gustash/freecarnival/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -42,17 +43,17 @@ for each game.`,
 			}
 
 			for slug, installInfo := range installed {
-				fmt.Printf("Checking %s...\n", slug)
+				logger.Debug("Checking for updates", "slug", slug)
 
 				product := auth.FindProductBySlug(library, slug)
 				if product == nil {
-					fmt.Printf("  Warning: %s not found in library (try running 'sync')\n", slug)
+					logger.Warn("Game not found in library (try running 'sync')", "slug", slug)
 					continue
 				}
 
 				latestVersion := product.GetLatestVersion(installInfo.OS)
 				if latestVersion == nil {
-					fmt.Printf("  Warning: No version found for OS %s\n", installInfo.OS)
+					logger.Warn("No version found for OS", "slug", slug, "os", installInfo.OS)
 					continue
 				}
 

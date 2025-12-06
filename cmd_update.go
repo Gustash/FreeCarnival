@@ -3,10 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
 
 	"github.com/gustash/freecarnival/auth"
 	"github.com/gustash/freecarnival/download"
+	"github.com/gustash/freecarnival/logger"
 	"github.com/gustash/freecarnival/update"
 	"github.com/spf13/cobra"
 )
@@ -75,12 +75,17 @@ Much faster than reinstalling for small updates.`,
 
 			// Check if already up to date
 			if !infoOnly && oldVersion.Version == newVersion.Version {
-				fmt.Printf("%s is already at version %s\n", product.Name, newVersion.Version)
+				logger.Info("Game is already up to date",
+					"name", product.Name,
+					"version", newVersion.Version)
 				return nil
 			}
 
-			fmt.Printf("Updating %s from v%s to v%s (%s)\n",
-				product.Name, oldVersion.Version, newVersion.Version, newVersion.OS)
+			logger.Info("Updating game",
+				"name", product.Name,
+				"from", oldVersion.Version,
+				"to", newVersion.Version,
+				"os", newVersion.OS)
 
 			// Load session for authenticated downloads
 			client, _, err := auth.LoadSessionClient()
@@ -115,10 +120,12 @@ Much faster than reinstalling for small updates.`,
 				installInfo.Version = newVersion.Version
 				installInfo.OS = newVersion.OS
 				if err := auth.AddInstalled(slug, installInfo); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: failed to update install info: %v\n", err)
+					logger.Warn("Failed to update install info", "error", err)
 				}
 
-				fmt.Printf("\nUpdate complete: %s is now at version %s\n", product.Name, newVersion.Version)
+				logger.Info("Update complete",
+					"name", product.Name,
+					"version", newVersion.Version)
 			}
 
 			return nil
@@ -134,4 +141,3 @@ Much faster than reinstalling for small updates.`,
 
 	return cmd
 }
-

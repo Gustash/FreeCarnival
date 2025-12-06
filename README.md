@@ -47,20 +47,10 @@ go run . -- ARGS
 
 - **Cross-platform**: Works on Windows, macOS, and Linux
 - **Parallel downloads**: Configurable worker count for fast downloads
+- **Memory management**: Configurable memory limits for chunk buffering
+- **Delta updates**: Only downloads changed files when updating
+- **Pause/Resume**: Automatically resume interrupted downloads
 - **Wine support**: Automatically launches Windows games via Wine on macOS/Linux
 - **Retry logic**: Automatic retry with exponential backoff for transient network errors
 - **File verification**: SHA256 verification of downloaded chunks and installed files
-
-## Roadmap
-
-- [x] Authentication
-- [x] Library sync
-- [x] Game installation with parallel chunk downloads
-- [x] Game uninstallation
-- [x] File verification
-- [x] Game launching (native + Wine)
-- [x] Update checking (list-updates)
-- [x] Retry logic for download failures
-- [x] Pause/Resume downloads
-- [ ] Update command (download delta/full updates)
-- [ ] Better logging
+- **Structured logging**: Configurable log levels (debug, info, warn, error)

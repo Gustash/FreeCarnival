@@ -3,12 +3,12 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"syscall"
 
+	"github.com/gustash/freecarnival/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -22,6 +22,8 @@ func defaultInstallBasePath() string {
 }
 
 func main() {
+	var logLevel string
+
 	// Set up context with signal handling for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -32,7 +34,7 @@ func main() {
 
 	go func() {
 		<-sigChan
-		fmt.Fprintln(os.Stderr, "\n\nReceived interrupt signal, shutting down gracefully...")
+		logger.Warn("\n\nReceived interrupt signal, shutting down gracefully...")
 		cancel()
 	}()
 
@@ -40,6 +42,21 @@ func main() {
 		Use:   "freecarnival",
 		Short: "CLI for IndieGala",
 		Long:  "FreeCarnival is a native cross-platform CLI program to install and launch IndieGala games",
+		PersistentPreRun: func(cmd *cobra.Command, args []string) {
+			// Set log level based on flag
+			switch logLevel {
+			case "debug":
+				logger.SetLevel(logger.LevelDebug)
+			case "info":
+				logger.SetLevel(logger.LevelInfo)
+			case "warn":
+				logger.SetLevel(logger.LevelWarn)
+			case "error":
+				logger.SetLevel(logger.LevelError)
+			default:
+				logger.SetLevel(logger.LevelInfo)
+			}
+		},
 	}
 
 	rootCmd.AddCommand(newLoginCmd())
@@ -53,8 +70,10 @@ func main() {
 	rootCmd.AddCommand(newInfoCmd())
 	rootCmd.AddCommand(newLaunchCmd())
 
+	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "info", "Log level (debug, info, warn, error)")
+
 	if err := rootCmd.ExecuteContext(ctx); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		logger.Error(err.Error())
 		os.Exit(1)
 	}
 }

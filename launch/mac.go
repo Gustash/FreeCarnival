@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/gustash/freecarnival/logger"
 	"howett.net/plist"
 )
 
@@ -98,7 +99,7 @@ func MarkMacExecutables(installPath string) error {
 	}
 
 	for _, bundle := range bundles {
-		fmt.Printf("Marking executable: %s\n", bundle.ExecutablePath)
+		logger.Debug("Marking executable", "path", bundle.ExecutablePath)
 		if err := bundle.MarkAsExecutable(); err != nil {
 			return err
 		}
