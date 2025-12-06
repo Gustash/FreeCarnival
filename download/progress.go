@@ -209,16 +209,18 @@ func (pt *ProgressTracker) render() {
 	pt.linesDrawn = len(lines)
 }
 
-// AddFile adds a file to track
-func (pt *ProgressTracker) AddFile(fileIndex int, fileName string, totalChunks int, fileSize int64) {
+// AddFile adds a file to track. chunksAlreadyWritten is used for resume support.
+func (pt *ProgressTracker) AddFile(fileIndex int, fileName string, totalChunks int, fileSize int64, chunksAlreadyWritten int) {
 	pt.filesMu.Lock()
 	defer pt.filesMu.Unlock()
 
-	pt.files[fileIndex] = &fileProgress{
+	fp := &fileProgress{
 		fileName:    fileName,
 		totalChunks: totalChunks,
 		totalSize:   fileSize,
 	}
+	fp.chunksWritten.Store(int32(chunksAlreadyWritten))
+	pt.files[fileIndex] = fp
 }
 
 // ChunkDownloaded records that a chunk was downloaded

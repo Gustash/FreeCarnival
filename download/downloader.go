@@ -200,7 +200,11 @@ func (d *Downloader) Download(ctx context.Context, installPath string) error {
 
 	// Add all files to the progress tracker
 	for _, info := range fileInfoMap {
-		d.progress.AddFile(info.Index, info.Record.FileName, info.ChunkCount, int64(info.Record.SizeInBytes))
+		chunksAlreadyWritten := 0
+		if resumeState != nil {
+			chunksAlreadyWritten = resumeState.StartChunkIndex[info.Index]
+		}
+		d.progress.AddFile(info.Index, info.Record.FileName, info.ChunkCount, int64(info.Record.SizeInBytes), chunksAlreadyWritten)
 	}
 
 	// If resuming, mark already-completed files and chunks

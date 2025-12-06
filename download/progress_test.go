@@ -21,8 +21,8 @@ func TestProgressTracker_AddFile(t *testing.T) {
 	pt := NewProgressTracker(1000, 2, false)
 	defer pt.Wait()
 
-	pt.AddFile(0, "file1.txt", 5, 500)
-	pt.AddFile(1, "file2.txt", 3, 500)
+	pt.AddFile(0, "file1.txt", 5, 500, 0)
+	pt.AddFile(1, "file2.txt", 3, 500, 0)
 
 	pt.filesMu.RLock()
 	defer pt.filesMu.RUnlock()
@@ -60,7 +60,7 @@ func TestProgressTracker_ChunkWritten(t *testing.T) {
 	pt := NewProgressTracker(1000, 1, false)
 	defer pt.Wait()
 
-	pt.AddFile(0, "file.txt", 3, 300)
+	pt.AddFile(0, "file.txt", 3, 300, 0)
 
 	pt.ChunkWritten(0, 100)
 	pt.ChunkWritten(0, 100)
@@ -83,8 +83,8 @@ func TestProgressTracker_FileComplete(t *testing.T) {
 	pt := NewProgressTracker(1000, 2, false)
 	defer pt.Wait()
 
-	pt.AddFile(0, "file1.txt", 5, 500)
-	pt.AddFile(1, "file2.txt", 3, 500)
+	pt.AddFile(0, "file1.txt", 5, 500, 0)
+	pt.AddFile(1, "file2.txt", 3, 500, 0)
 
 	pt.FileComplete(0)
 
@@ -165,7 +165,7 @@ func TestProgressTracker_ConcurrentAccess(t *testing.T) {
 
 	// Add files
 	for i := 0; i < 10; i++ {
-		pt.AddFile(i, "file.txt", 10, 1000)
+		pt.AddFile(i, "file.txt", 10, 1000, 0)
 	}
 
 	// Concurrent chunk downloads and writes
