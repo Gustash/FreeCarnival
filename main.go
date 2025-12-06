@@ -50,7 +50,6 @@ func main() {
 	rootCmd.AddCommand(newVerifyCmd())
 	rootCmd.AddCommand(newInfoCmd())
 	rootCmd.AddCommand(newLaunchCmd())
-	rootCmd.AddCommand(newListUpdatesCmd())
 
 	if err := rootCmd.ExecuteContext(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, err)

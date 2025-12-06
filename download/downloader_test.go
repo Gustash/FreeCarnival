@@ -406,28 +406,22 @@ func TestDownloader_Download_ContextCancellation(t *testing.T) {
 	// Should return without blocking due to cancelled context
 }
 
-func TestSingleFileWriter_EmptyFile(t *testing.T) {
-	// Test that singleFileWriter handles empty chunk manifest correctly
+func TestSingleWriter_EmptyChannel(t *testing.T) {
+	// Test that diskWriter handles empty channel correctly
 	product := &auth.Product{}
 	version := &auth.ProductVersion{}
 	d := NewDownloader(nil, product, version, DefaultDownloadOptions())
 
-	info := &fileInfo{
-		Index:      0,
-		FullPath:   "/tmp/nonexistent",
-		ChunkCount: 0,
-	}
-
 	chunks := make(chan DownloadedChunk)
 	close(chunks)
 
-	err := d.singleFileWriter(context.Background(), info, chunks, []BuildManifestChunksRecord{}, 0, false)
+	err := d.diskWriter(context.Background(), chunks, map[int]*fileInfo{}, map[int]int{}, nil)
 	if err != nil {
-		t.Errorf("singleFileWriter failed for empty file: %v", err)
+		t.Errorf("diskWriter failed for empty channel: %v", err)
 	}
 }
 
-func TestSingleFileWriter_Success(t *testing.T) {
+func TestSingleWriter_Success(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "writer-test-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
@@ -446,11 +440,8 @@ func TestSingleFileWriter_Success(t *testing.T) {
 		ChunkCount: 3,
 	}
 
-	chunkManifest := []BuildManifestChunksRecord{
-		{ID: 0, ChunkSHA: "sha0"},
-		{ID: 1, ChunkSHA: "sha1"},
-		{ID: 2, ChunkSHA: "sha2"},
-	}
+	fileInfoMap := map[int]*fileInfo{0: info}
+	fileChunkCounts := map[int]int{0: 3}
 
 	chunks := make(chan DownloadedChunk, 3)
 
@@ -460,9 +451,9 @@ func TestSingleFileWriter_Success(t *testing.T) {
 	chunks <- DownloadedChunk{FileIndex: 0, ChunkIndex: 2, Data: []byte("chunk2")}
 	close(chunks)
 
-	err = d.singleFileWriter(context.Background(), info, chunks, chunkManifest, 0, false)
+	err = d.diskWriter(context.Background(), chunks, fileInfoMap, fileChunkCounts, nil)
 	if err != nil {
-		t.Fatalf("singleFileWriter failed: %v", err)
+		t.Fatalf("diskWriter failed: %v", err)
 	}
 
 	// Verify file contents
@@ -477,7 +468,7 @@ func TestSingleFileWriter_Success(t *testing.T) {
 	}
 }
 
-func TestSingleFileWriter_OutOfOrderChunks(t *testing.T) {
+func TestSingleWriter_OutOfOrderChunks(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "writer-test-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
@@ -496,11 +487,8 @@ func TestSingleFileWriter_OutOfOrderChunks(t *testing.T) {
 		ChunkCount: 3,
 	}
 
-	chunkManifest := []BuildManifestChunksRecord{
-		{ID: 0, ChunkSHA: "sha0"},
-		{ID: 1, ChunkSHA: "sha1"},
-		{ID: 2, ChunkSHA: "sha2"},
-	}
+	fileInfoMap := map[int]*fileInfo{0: info}
+	fileChunkCounts := map[int]int{0: 3}
 
 	chunks := make(chan DownloadedChunk, 3)
 
@@ -510,9 +498,9 @@ func TestSingleFileWriter_OutOfOrderChunks(t *testing.T) {
 	chunks <- DownloadedChunk{FileIndex: 0, ChunkIndex: 1, Data: []byte("chunk1")}
 	close(chunks)
 
-	err = d.singleFileWriter(context.Background(), info, chunks, chunkManifest, 0, false)
+	err = d.diskWriter(context.Background(), chunks, fileInfoMap, fileChunkCounts, nil)
 	if err != nil {
-		t.Fatalf("singleFileWriter failed: %v", err)
+		t.Fatalf("diskWriter failed: %v", err)
 	}
 
 	// Verify file contents are in correct order despite out-of-order delivery
@@ -527,7 +515,7 @@ func TestSingleFileWriter_OutOfOrderChunks(t *testing.T) {
 	}
 }
 
-func TestSingleFileWriter_ChunkError(t *testing.T) {
+func TestSingleWriter_ChunkError(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "writer-test-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
@@ -546,10 +534,8 @@ func TestSingleFileWriter_ChunkError(t *testing.T) {
 		ChunkCount: 2,
 	}
 
-	chunkManifest := []BuildManifestChunksRecord{
-		{ID: 0, ChunkSHA: "sha0"},
-		{ID: 1, ChunkSHA: "sha1"},
-	}
+	fileInfoMap := map[int]*fileInfo{0: info}
+	fileChunkCounts := map[int]int{0: 2}
 
 	chunks := make(chan DownloadedChunk, 2)
 
@@ -557,7 +543,7 @@ func TestSingleFileWriter_ChunkError(t *testing.T) {
 	chunks <- DownloadedChunk{FileIndex: 0, ChunkIndex: 0, Data: nil, Error: io.ErrUnexpectedEOF}
 	close(chunks)
 
-	err = d.singleFileWriter(context.Background(), info, chunks, chunkManifest, 0, false)
+	err = d.diskWriter(context.Background(), chunks, fileInfoMap, fileChunkCounts, nil)
 	if err == nil {
 		t.Error("expected error when chunk has error")
 	}

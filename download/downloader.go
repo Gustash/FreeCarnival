@@ -1,7 +1,6 @@
 package download
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -307,92 +306,70 @@ func (d *Downloader) groupChunksByFile(chunks []BuildManifestChunksRecord, fileI
 func (d *Downloader) downloadAndWrite(ctx context.Context, fileChunks map[int][]BuildManifestChunksRecord, fileInfoMap map[string]*fileInfo, resumeState *ResumeState) error {
 	// Create channels
 	chunkJobs := make(chan ChunkDownload, d.options.MaxDownloadWorkers*4)
+	// Single channel for all downloaded chunks - buffer based on memory limit
+	// Each chunk is up to MaxChunkSize, so buffer = maxMemory / MaxChunkSize
+	downloadedChunks := make(chan DownloadedChunk, d.maxMemory/MaxChunkSize)
 
-	// Create per-file channels for routing downloaded chunks
-	fileChannels := make(map[int]chan DownloadedChunk)
+	// Build file index to info lookup
+	fileIndexToInfo := make(map[int]*fileInfo)
+	fileIndexToChunks := make(map[int]int) // fileIndex -> total chunks needed
 	for _, info := range fileInfoMap {
-		// Buffer enough for all chunks of this file
-		fileChannels[info.Index] = make(chan DownloadedChunk, len(fileChunks[info.Index])+1)
+		fileIndexToInfo[info.Index] = info
+		fileIndexToChunks[info.Index] = len(fileChunks[info.Index])
 	}
 
 	// Context for cancellation
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	// Error channel - buffered to avoid blocking
-	errChan := make(chan error, d.options.MaxDownloadWorkers+len(fileInfoMap))
+	// Error channel
+	errChan := make(chan error, 1)
 
 	var downloadWg sync.WaitGroup
-	var writerWg sync.WaitGroup
-
-	// Start per-file writer goroutines (only for files that need downloading)
-	for _, info := range fileInfoMap {
-		chunks := fileChunks[info.Index]
-		if len(chunks) == 0 {
-			continue // Skip files with no chunks to download
-		}
-
-		// Determine if we're resuming this file
-		var startChunkIdx int
-		appendMode := false
-		if resumeState != nil {
-			if resumeState.CompletedFiles[info.Index] {
-				continue // Skip completed files
-			}
-			startChunkIdx = resumeState.StartChunkIndex[info.Index]
-			appendMode = startChunkIdx > 0 && !resumeState.CorruptedFiles[info.Index]
-		}
-
-		writerWg.Add(1)
-		go func(info *fileInfo, chunks []BuildManifestChunksRecord, startIdx int, append bool) {
-			defer writerWg.Done()
-			if err := d.singleFileWriter(ctx, info, fileChannels[info.Index], chunks, startIdx, append); err != nil {
-				select {
-				case errChan <- err:
-				default:
-				}
-				cancel()
-			}
-		}(info, chunks, startChunkIdx, appendMode)
-	}
 
 	// Start download workers
 	for i := 0; i < d.options.MaxDownloadWorkers; i++ {
 		downloadWg.Add(1)
 		go func() {
 			defer downloadWg.Done()
-			d.downloadWorkerWithRouting(ctx, chunkJobs, fileChannels)
+			d.downloadWorker(ctx, chunkJobs, downloadedChunks)
 		}()
 	}
 
-	// Feed chunk jobs - interleave chunks from different files for true parallelism
+	// Start single writer goroutine
+	writerDone := make(chan error, 1)
+	go func() {
+		writerDone <- d.diskWriter(ctx, downloadedChunks, fileIndexToInfo, fileIndexToChunks, resumeState)
+	}()
+
+	// Feed chunk jobs - interleave chunks from different files
 	go func() {
 		defer close(chunkJobs)
 
-		// Build a list of all file infos for round-robin scheduling
 		fileInfos := make([]*fileInfo, 0, len(fileInfoMap))
 		fileNames := make([]string, 0, len(fileInfoMap))
 		for fileName, info := range fileInfoMap {
+			// Skip completed files when resuming
+			if resumeState != nil && resumeState.CompletedFiles[info.Index] {
+				continue
+			}
 			fileInfos = append(fileInfos, info)
 			fileNames = append(fileNames, fileName)
 		}
 
-		// Track next chunk index to send for each file
 		nextChunkToSend := make([]int, len(fileInfos))
 		filesRemaining := len(fileInfos)
 
-		// Round-robin through files, sending one chunk from each
 		for filesRemaining > 0 {
 			for i, info := range fileInfos {
 				if info == nil {
-					continue // File already complete
+					continue
 				}
 
 				chunks := fileChunks[info.Index]
 				chunkIdx := nextChunkToSend[i]
 
 				if chunkIdx >= len(chunks) {
-					// This file is done being queued
 					fileInfos[i] = nil
 					filesRemaining--
 					continue
@@ -413,179 +390,240 @@ func (d *Downloader) downloadAndWrite(ctx context.Context, fileChunks map[int][]
 		}
 	}()
 
-	// Wait for download workers to finish, then close file channels
+	// Wait for download workers to finish, then close the download channel
 	go func() {
 		downloadWg.Wait()
-		for _, ch := range fileChannels {
-			close(ch)
-		}
+		close(downloadedChunks)
 	}()
 
-	// Wait for all writers to finish
-	writerWg.Wait()
-
-	// Check for errors
+	// Wait for writer to finish
 	select {
+	case err := <-writerDone:
+		if err != nil {
+			cancel()
+			return err
+		}
 	case err := <-errChan:
+		cancel()
 		return err
-	default:
-		return nil
 	}
+
+	return nil
 }
 
-func (d *Downloader) downloadWorkerWithRouting(ctx context.Context, jobs <-chan ChunkDownload, fileChannels map[int]chan DownloadedChunk) {
+func (d *Downloader) downloadWorker(ctx context.Context, jobs <-chan ChunkDownload, results chan<- DownloadedChunk) {
 	for job := range jobs {
-		// Wait for memory to be available (but don't exit on cancel - we want to finish pending jobs)
+		// Wait for memory to be available - this is the GLOBAL memory limit
 		d.waitForMemory(ctx, MaxChunkSize)
+
+		// If context was cancelled while waiting, exit without releasing
+		if ctx.Err() != nil {
+			return
+		}
 
 		// Download the chunk
 		data, err := d.downloadChunk(ctx, job.FileIndex, job.ChunkSHA)
 
-		// If download was cancelled, skip this chunk (don't send it)
-		// The file will be incomplete and will be resumed on next run
+		// If download was cancelled, release memory and exit
 		if err == context.Canceled {
-			if data != nil {
-				d.releaseMemory(int64(len(data)))
-			}
+			d.releaseMemory(MaxChunkSize)
 			return
 		}
 
-		result := DownloadedChunk{
+		// If download failed, release memory and send error
+		if err != nil {
+			d.releaseMemory(MaxChunkSize)
+			results <- DownloadedChunk{
+				FileIndex:  job.FileIndex,
+				ChunkIndex: job.ChunkIndex,
+				Error:      err,
+			}
+			continue
+		}
+
+		// Verify chunk SHA if enabled
+		if !d.options.SkipVerify {
+			expectedSHA := extractSHA(job.ChunkSHA)
+			if !VerifyChunk(data, expectedSHA) {
+				d.releaseMemory(MaxChunkSize)
+				results <- DownloadedChunk{
+					FileIndex:  job.FileIndex,
+					ChunkIndex: job.ChunkIndex,
+					Error:      fmt.Errorf("SHA mismatch for chunk %s", job.ChunkSHA),
+				}
+				continue
+			}
+		}
+
+		// Success - send to writer (memory released after write)
+		results <- DownloadedChunk{
 			FileIndex:  job.FileIndex,
 			ChunkIndex: job.ChunkIndex,
 			Data:       data,
-			Error:      err,
 		}
-
-		if err == nil && !d.options.SkipVerify {
-			// Verify chunk SHA
-			expectedSHA := extractSHA(job.ChunkSHA)
-			if !VerifyChunk(data, expectedSHA) {
-				result.Error = fmt.Errorf("SHA mismatch for chunk %s", job.ChunkSHA)
-				result.Data = nil
-				d.releaseMemory(int64(len(data)))
-			}
-		}
-
-		// Send the result to file writer
-		fileChan := fileChannels[job.FileIndex]
-		fileChan <- result
 	}
 }
 
-// singleFileWriter handles writing chunks for a single file in order
-func (d *Downloader) singleFileWriter(ctx context.Context, info *fileInfo, chunks <-chan DownloadedChunk, chunkManifest []BuildManifestChunksRecord, startChunkIdx int, appendMode bool) error {
-	totalChunks := len(chunkManifest)
-	if totalChunks == 0 {
-		return nil
-	}
+// fileWriteState tracks the state of writing a single file
+type fileWriteState struct {
+	info          *fileInfo
+	file          *os.File
+	pendingChunks map[int][]byte
+	nextChunkIdx  int
+	totalChunks   int
+}
 
-	// Track pending chunks (out of order)
-	pendingChunks := make(map[int][]byte)
-	nextChunkIndex := 0
+// diskWriter handles writing all downloaded chunks to disk
+func (d *Downloader) diskWriter(ctx context.Context, chunks <-chan DownloadedChunk, fileInfoMap map[int]*fileInfo, fileChunkCounts map[int]int, resumeState *ResumeState) error {
+	// Track state for each file
+	fileStates := make(map[int]*fileWriteState)
 
-	// Open the file (append mode for resumed downloads)
-	var f *os.File
-	var err error
-	if appendMode {
-		f, err = os.OpenFile(info.FullPath, os.O_WRONLY|os.O_APPEND, 0o644)
-		if err != nil {
-			// Fallback to create mode if append fails
-			f, err = os.Create(info.FullPath)
-		}
-	} else {
-		f, err = os.Create(info.FullPath)
-	}
-	if err != nil {
-		return fmt.Errorf("failed to open file %s: %w", info.FullPath, err)
-	}
-	defer f.Close()
+	_ = resumeState // Used for checking completed files in the caller
 
-	// Use buffered writer for better performance (4MB buffer)
-	bw := bufio.NewWriterSize(f, 4*1024*1024)
-	defer bw.Flush()
-
-	for result := range chunks {
-		if result.Error != nil {
-			return fmt.Errorf("download error for %s: %w", info.FullPath, result.Error)
-		}
-
-		chunkIdx := result.ChunkIndex
-
-		if chunkIdx == nextChunkIndex {
-			// Write this chunk and any pending sequential chunks
-			if err := d.writeChunkBuffered(bw, result.Data, info.Index, info.FullPath); err != nil {
-				return err
+	// Cleanup function to close all open files
+	defer func() {
+		for _, state := range fileStates {
+			if state.file != nil {
+				state.file.Close()
 			}
-			nextChunkIndex++
+		}
+	}()
+
+	for chunk := range chunks {
+		// Handle download errors
+		if chunk.Error != nil {
+			info := fileInfoMap[chunk.FileIndex]
+			if info != nil {
+				return fmt.Errorf("download error for %s: %w", info.FullPath, chunk.Error)
+			}
+			return fmt.Errorf("download error for file %d: %w", chunk.FileIndex, chunk.Error)
+		}
+
+		// Get or create file state
+		state, exists := fileStates[chunk.FileIndex]
+		if !exists {
+			info := fileInfoMap[chunk.FileIndex]
+			if info == nil {
+				d.releaseMemory(MaxChunkSize)
+				continue
+			}
+
+			// Determine if we're resuming this file
+			appendMode := false
+			startChunkIdx := 0
+			if resumeState != nil {
+				startChunkIdx = resumeState.StartChunkIndex[chunk.FileIndex]
+				appendMode = startChunkIdx > 0 && !resumeState.CorruptedFiles[chunk.FileIndex]
+			}
+
+			// Open the file
+			var f *os.File
+			var err error
+			if appendMode {
+				f, err = os.OpenFile(info.FullPath, os.O_WRONLY|os.O_APPEND, 0o644)
+				if err != nil {
+					f, err = os.Create(info.FullPath)
+				}
+			} else {
+				f, err = os.Create(info.FullPath)
+			}
+			if err != nil {
+				d.releaseMemory(MaxChunkSize)
+				return fmt.Errorf("failed to open file %s: %w", info.FullPath, err)
+			}
+
+			state = &fileWriteState{
+				info:          info,
+				file:          f,
+				pendingChunks: make(map[int][]byte),
+				nextChunkIdx:  0,
+				totalChunks:   fileChunkCounts[chunk.FileIndex],
+			}
+			fileStates[chunk.FileIndex] = state
+		}
+
+		// Process the chunk
+		if chunk.ChunkIndex == state.nextChunkIdx {
+			// Write this chunk
+			if err := d.writeChunk(state.file, chunk.Data, state.info.Index); err != nil {
+				return fmt.Errorf("failed to write to %s: %w", state.info.FullPath, err)
+			}
+			state.nextChunkIdx++
 
 			// Write any pending sequential chunks
 			for {
-				pendingData, exists := pendingChunks[nextChunkIndex]
+				pendingData, exists := state.pendingChunks[state.nextChunkIdx]
 				if !exists {
 					break
 				}
-				if err := d.writeChunkBuffered(bw, pendingData, info.Index, info.FullPath); err != nil {
-					return err
+				if err := d.writeChunk(state.file, pendingData, state.info.Index); err != nil {
+					return fmt.Errorf("failed to write to %s: %w", state.info.FullPath, err)
 				}
-				delete(pendingChunks, nextChunkIndex)
-				nextChunkIndex++
+				delete(state.pendingChunks, state.nextChunkIdx)
+				state.nextChunkIdx++
 			}
 
 			// Check if file is complete
-			if nextChunkIndex >= totalChunks {
+			if state.nextChunkIdx >= state.totalChunks {
+				state.file.Close()
+				state.file = nil
+
 				if d.progress != nil {
-					d.progress.FileComplete(info.Index)
+					d.progress.FileComplete(state.info.Index)
 				}
-				// Flush before returning success
-				if err := bw.Flush(); err != nil {
-					return fmt.Errorf("failed to flush %s: %w", info.FullPath, err)
-				}
-				return nil
+
+				delete(fileStates, chunk.FileIndex)
 			}
 		} else {
-			// Store for later (out of order)
-			pendingChunks[chunkIdx] = result.Data
+			// Out of order - store for later
+			state.pendingChunks[chunk.ChunkIndex] = chunk.Data
 		}
 	}
 
-	// Channel closed - write any remaining sequential pending chunks
-	for {
-		pendingData, exists := pendingChunks[nextChunkIndex]
-		if !exists {
-			break
-		}
-		if err := d.writeChunkBuffered(bw, pendingData, info.Index, info.FullPath); err != nil {
-			return err
-		}
-		delete(pendingChunks, nextChunkIndex)
-		nextChunkIndex++
+	// Channel closed - check if all files are complete
+	if ctx.Err() != nil {
+		// Graceful shutdown - incomplete is expected
+		return nil
 	}
-	// Flush buffered data
-	if err := bw.Flush(); err != nil {
-		return fmt.Errorf("failed to flush %s: %w", info.FullPath, err)
-	}
-	// Check if we got all chunks
-	if nextChunkIndex < totalChunks {
-		// File is incomplete - check if context was cancelled
-		if ctx.Err() != nil {
-			// Graceful shutdown - incomplete is expected
-			return nil
+
+	// Write any remaining pending chunks and check completeness
+	for fileIdx, state := range fileStates {
+		for {
+			pendingData, exists := state.pendingChunks[state.nextChunkIdx]
+			if !exists {
+				break
+			}
+			if err := d.writeChunk(state.file, pendingData, state.info.Index); err != nil {
+				return fmt.Errorf("failed to write to %s: %w", state.info.FullPath, err)
+			}
+			delete(state.pendingChunks, state.nextChunkIdx)
+			state.nextChunkIdx++
 		}
-		return fmt.Errorf("file %s incomplete: got %d/%d chunks", info.FullPath, nextChunkIndex, totalChunks)
+
+		if state.nextChunkIdx < state.totalChunks {
+			return fmt.Errorf("file %s incomplete: got %d/%d chunks", state.info.FullPath, state.nextChunkIdx, state.totalChunks)
+		}
+
+		if state.file != nil {
+			state.file.Close()
+		}
+		if d.progress != nil {
+			d.progress.FileComplete(fileIdx)
+		}
 	}
+
 	return nil
 }
 
-func (d *Downloader) writeChunkBuffered(bw *bufio.Writer, data []byte, fileIndex int, filePath string) error {
-	if _, err := bw.Write(data); err != nil {
-		d.releaseMemory(int64(len(data)))
-		return fmt.Errorf("failed to write to %s: %w", filePath, err)
+// writeChunk writes data directly to file and releases memory
+func (d *Downloader) writeChunk(f *os.File, data []byte, fileIndex int) error {
+	if _, err := f.Write(data); err != nil {
+		d.releaseMemory(MaxChunkSize)
+		return err
 	}
 	chunkSize := int64(len(data))
-	d.releaseMemory(chunkSize)
+	d.releaseMemory(MaxChunkSize)
 
-	// Track disk write progress
 	if d.progress != nil {
 		d.progress.ChunkWritten(fileIndex, chunkSize)
 	}
