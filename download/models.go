@@ -78,10 +78,3 @@ type DownloadedChunk struct {
 	Data       []byte // The downloaded chunk data
 	Error      error  // Any error that occurred during download
 }
-
-// FileWriteJob represents a file that needs chunks written to it
-type FileWriteJob struct {
-	FilePath    string
-	TotalChunks int
-	TotalSize   int
-}
