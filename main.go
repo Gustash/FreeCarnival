@@ -47,6 +47,7 @@ func main() {
 	rootCmd.AddCommand(newSyncCmd())
 	rootCmd.AddCommand(newInstallCmd())
 	rootCmd.AddCommand(newUninstallCmd())
+	rootCmd.AddCommand(newUpdateCmd())
 	rootCmd.AddCommand(newVerifyCmd())
 	rootCmd.AddCommand(newInfoCmd())
 	rootCmd.AddCommand(newLaunchCmd())

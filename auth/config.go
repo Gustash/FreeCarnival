@@ -37,4 +37,3 @@ func ensureConfigDir() (string, error) {
 	}
 	return dir, nil
 }
-

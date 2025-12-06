@@ -171,6 +171,36 @@ func (d *Downloader) Download(ctx context.Context, installPath string) error {
 	return nil
 }
 
+// DownloadDelta downloads files for an update operation.
+// This is similar to Download but skips manifest fetching and uses provided data.
+func (d *Downloader) DownloadDelta(ctx context.Context, fileInfoMap map[string]*FileInfo, fileChunks map[int][]manifest.ChunkRecord, totalBytes int64, totalFiles int) error {
+	d.totalBytes = totalBytes
+	d.totalFiles = totalFiles
+
+	d.progress = progress.New(d.totalBytes, d.totalFiles, d.options.Verbose)
+	for _, info := range fileInfoMap {
+		d.progress.AddFile(info.Index, info.Record.FileName, info.ChunkCount, int64(info.Record.SizeInBytes), 0)
+	}
+
+	err := d.downloadAndWrite(ctx, fileChunks, fileInfoMap, nil)
+
+	if ctx.Err() == context.Canceled {
+		d.progress.Abort()
+		fmt.Println("\n\nUpdate cancelled.")
+		return context.Canceled
+	}
+
+	if err != nil {
+		d.progress.Abort()
+		return err
+	}
+
+	d.progress.Wait()
+	d.progress.PrintSummary()
+
+	return nil
+}
+
 func (d *Downloader) calculateTotals(records []manifest.BuildRecord) {
 	for _, record := range records {
 		if !record.IsDirectory() && !record.IsEmpty() {

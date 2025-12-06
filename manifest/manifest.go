@@ -121,6 +121,11 @@ func fetchCSV(ctx context.Context, client *http.Client, url string) ([]byte, err
 	return io.ReadAll(resp.Body)
 }
 
+// ParseBuildManifest parses a build manifest from CSV data.
+func ParseBuildManifest(data []byte) ([]BuildRecord, error) {
+	return parseBuildManifest(data)
+}
+
 func parseBuildManifest(data []byte) ([]BuildRecord, error) {
 	reader := csv.NewReader(bytes.NewReader(data))
 
