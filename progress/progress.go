@@ -1,4 +1,5 @@
-package download
+// Package progress provides download progress tracking and display.
+package progress
 
 import (
 	"fmt"
@@ -10,27 +11,23 @@ import (
 	"time"
 )
 
-// ProgressTracker manages download progress display
-type ProgressTracker struct {
-	// Overall stats
+// Tracker manages download progress display.
+type Tracker struct {
 	totalBytes      int64
 	downloadedBytes atomic.Int64
 	writtenBytes    atomic.Int64
 	totalFiles      int
 	completedFiles  atomic.Int32
 
-	// Speed tracking
 	lastDownloadedBytes int64
 	lastWrittenBytes    int64
 	lastSpeedUpdate     time.Time
-	downloadSpeed       atomic.Int64 // bytes per second
-	diskSpeed           atomic.Int64 // bytes per second
+	downloadSpeed       atomic.Int64
+	diskSpeed           atomic.Int64
 
-	// File tracking
 	files   map[int]*fileProgress
 	filesMu sync.RWMutex
 
-	// Display control
 	stopChan   chan struct{}
 	doneChan   chan struct{}
 	linesDrawn int
@@ -46,9 +43,9 @@ type fileProgress struct {
 	complete      bool
 }
 
-// NewProgressTracker creates a new progress tracker
-func NewProgressTracker(totalBytes int64, totalFiles int, verbose bool) *ProgressTracker {
-	pt := &ProgressTracker{
+// New creates a new progress tracker.
+func New(totalBytes int64, totalFiles int, verbose bool) *Tracker {
+	pt := &Tracker{
 		totalBytes:      totalBytes,
 		totalFiles:      totalFiles,
 		files:           make(map[int]*fileProgress),
@@ -58,13 +55,12 @@ func NewProgressTracker(totalBytes int64, totalFiles int, verbose bool) *Progres
 		verbose:         verbose,
 	}
 
-	// Start the display loop
 	go pt.displayLoop()
 
 	return pt
 }
 
-func (pt *ProgressTracker) displayLoop() {
+func (pt *Tracker) displayLoop() {
 	defer close(pt.doneChan)
 
 	ticker := time.NewTicker(100 * time.Millisecond)
@@ -73,7 +69,7 @@ func (pt *ProgressTracker) displayLoop() {
 	for {
 		select {
 		case <-pt.stopChan:
-			pt.render() // Final render
+			pt.render()
 			return
 		case <-ticker.C:
 			pt.updateSpeed()
@@ -82,7 +78,7 @@ func (pt *ProgressTracker) displayLoop() {
 	}
 }
 
-func (pt *ProgressTracker) updateSpeed() {
+func (pt *Tracker) updateSpeed() {
 	now := time.Now()
 	elapsed := now.Sub(pt.lastSpeedUpdate).Seconds()
 	if elapsed > 0 {
@@ -101,15 +97,13 @@ func (pt *ProgressTracker) updateSpeed() {
 	}
 }
 
-func (pt *ProgressTracker) render() {
-	// Move cursor up to overwrite previous output
+func (pt *Tracker) render() {
 	if pt.linesDrawn > 0 {
 		fmt.Fprintf(os.Stdout, "\033[%dA", pt.linesDrawn)
 	}
 
 	var lines []string
 
-	// Overall progress
 	downloaded := pt.downloadedBytes.Load()
 	percent := float64(0)
 	if pt.totalBytes > 0 {
@@ -120,7 +114,6 @@ func (pt *ProgressTracker) render() {
 	dskSpeed := pt.diskSpeed.Load()
 	completed := pt.completedFiles.Load()
 
-	// File list (only in verbose mode)
 	if pt.verbose {
 		pt.filesMu.RLock()
 		indices := make([]int, 0, len(pt.files))
@@ -137,19 +130,16 @@ func (pt *ProgressTracker) render() {
 				filePercent = float64(chunksWritten) / float64(fp.totalChunks) * 100
 			}
 
-			// Status indicator
 			status := "⏳"
 			if fp.complete {
 				status = "✓ "
 			}
 
-			// Truncate filename
 			name := fp.fileName
 			if len(name) > 45 {
 				name = "..." + name[len(name)-42:]
 			}
 
-			// Mini progress bar for file
 			fileBarWidth := 20
 			fileFilled := int(filePercent / 100 * float64(fileBarWidth))
 			if fileFilled < 0 {
@@ -170,10 +160,9 @@ func (pt *ProgressTracker) render() {
 		}
 		pt.filesMu.RUnlock()
 
-		lines = append(lines, "\033[K") // Empty separator line
+		lines = append(lines, "\033[K")
 	}
 
-	// Progress bar
 	barWidth := 60
 	filled := int(percent / 100 * float64(barWidth))
 	if filled < 0 {
@@ -185,32 +174,29 @@ func (pt *ProgressTracker) render() {
 	bar := strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled)
 	lines = append(lines, fmt.Sprintf("\033[K[%s]", bar))
 
-	// Stats line
 	lines = append(lines, fmt.Sprintf(
 		"\033[K%s / %s [%5.1f%%] | DL: %s/s | Disk: %s/s | Files: %d/%d",
-		formatBytes(downloaded),
-		formatBytes(pt.totalBytes),
+		FormatBytes(downloaded),
+		FormatBytes(pt.totalBytes),
 		percent,
-		formatBytes(dlSpeed),
-		formatBytes(dskSpeed),
+		FormatBytes(dlSpeed),
+		FormatBytes(dskSpeed),
 		completed,
 		pt.totalFiles,
 	))
 
-	// Clear any extra lines from previous render
 	for i := len(lines); i < pt.linesDrawn; i++ {
 		lines = append(lines, "\033[K")
 	}
 
-	// Print all lines
 	output := strings.Join(lines, "\n") + "\n"
 	fmt.Fprint(os.Stdout, output)
 
 	pt.linesDrawn = len(lines)
 }
 
-// AddFile adds a file to track. chunksAlreadyWritten is used for resume support.
-func (pt *ProgressTracker) AddFile(fileIndex int, fileName string, totalChunks int, fileSize int64, chunksAlreadyWritten int) {
+// AddFile adds a file to track.
+func (pt *Tracker) AddFile(fileIndex int, fileName string, totalChunks int, fileSize int64, chunksAlreadyWritten int) {
 	pt.filesMu.Lock()
 	defer pt.filesMu.Unlock()
 
@@ -223,19 +209,19 @@ func (pt *ProgressTracker) AddFile(fileIndex int, fileName string, totalChunks i
 	pt.files[fileIndex] = fp
 }
 
-// ChunkDownloaded records that a chunk was downloaded
-func (pt *ProgressTracker) ChunkDownloaded(fileIndex int, chunkSize int64) {
+// ChunkDownloaded records that a chunk was downloaded.
+func (pt *Tracker) ChunkDownloaded(fileIndex int, chunkSize int64) {
 	pt.downloadedBytes.Add(chunkSize)
 }
 
-// AddDownloadedBytes adds already-downloaded bytes (for resume)
-func (pt *ProgressTracker) AddDownloadedBytes(bytes int64) {
+// AddDownloadedBytes adds already-downloaded bytes (for resume).
+func (pt *Tracker) AddDownloadedBytes(bytes int64) {
 	pt.downloadedBytes.Add(bytes)
 	pt.writtenBytes.Add(bytes)
 }
 
-// ChunkWritten records that a chunk was written to disk
-func (pt *ProgressTracker) ChunkWritten(fileIndex int, chunkSize int64) {
+// ChunkWritten records that a chunk was written to disk.
+func (pt *Tracker) ChunkWritten(fileIndex int, chunkSize int64) {
 	pt.writtenBytes.Add(chunkSize)
 
 	pt.filesMu.RLock()
@@ -248,44 +234,57 @@ func (pt *ProgressTracker) ChunkWritten(fileIndex int, chunkSize int64) {
 	}
 }
 
-// FileComplete marks a file as complete
-func (pt *ProgressTracker) FileComplete(fileIndex int) {
+// FileComplete marks a file as complete.
+func (pt *Tracker) FileComplete(fileIndex int) {
 	pt.completedFiles.Add(1)
 
 	pt.filesMu.Lock()
 	if fp, ok := pt.files[fileIndex]; ok {
 		fp.complete = true
-		// Ensure it shows 100%
 		fp.chunksWritten.Store(int32(fp.totalChunks))
 	}
 	pt.filesMu.Unlock()
 }
 
-// GetStats returns current download statistics
-func (pt *ProgressTracker) GetStats() (downloadSpeed, diskSpeed int64, completed, total int) {
+// GetStats returns current download statistics.
+func (pt *Tracker) GetStats() (downloadSpeed, diskSpeed int64, completed, total int) {
 	return pt.downloadSpeed.Load(), pt.diskSpeed.Load(), int(pt.completedFiles.Load()), pt.totalFiles
 }
 
-// Wait waits for the progress display to finish
-func (pt *ProgressTracker) Wait() {
+// Wait waits for the progress display to finish.
+func (pt *Tracker) Wait() {
 	select {
 	case <-pt.stopChan:
-		// Already stopped
 	default:
 		close(pt.stopChan)
 	}
 	<-pt.doneChan
 }
 
-// PrintSummary prints a final summary
-func (pt *ProgressTracker) PrintSummary() {
+// PrintSummary prints a final summary.
+func (pt *Tracker) PrintSummary() {
 	fmt.Printf("\n✓ Download complete: %d files, %s\n",
 		pt.completedFiles.Load(),
-		formatBytes(pt.totalBytes),
+		FormatBytes(pt.totalBytes),
 	)
 }
 
-// Abort stops the progress display
-func (pt *ProgressTracker) Abort() {
+// Abort stops the progress display.
+func (pt *Tracker) Abort() {
 	pt.Wait()
 }
+
+// FormatBytes formats bytes in human-readable form.
+func FormatBytes(bytes int64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	div, exp := int64(unit), 0
+	for n := bytes / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.2f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+

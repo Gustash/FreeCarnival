@@ -11,6 +11,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Re-export download constants for CLI flags
+var (
+	defaultMaxWorkers = download.DefaultMaxWorkers
+	defaultMaxMemory  = download.DefaultMaxMemory
+)
+
 func newInstallCmd() *cobra.Command {
 	var (
 		version            string
@@ -115,7 +121,7 @@ the latest version for the current OS will be used.`,
 			}
 
 			// Create download options
-			opts := download.DownloadOptions{
+			opts := download.Options{
 				MaxDownloadWorkers: maxDownloadWorkers,
 				MaxMemoryUsage:     maxMemoryUsage,
 				SkipVerify:         skipVerify,
@@ -124,7 +130,7 @@ the latest version for the current OS will be used.`,
 			}
 
 			// Create downloader and start download
-			downloader := download.NewDownloader(client, product, productVersion, opts)
+			downloader := download.New(client, product, productVersion, opts)
 			err = downloader.Download(cmd.Context(), installPath)
 
 			// Check if download was cancelled (Ctrl+C)
@@ -158,8 +164,8 @@ the latest version for the current OS will be used.`,
 	cmd.Flags().StringVar(&targetOS, "os", "", "Target OS: windows, linux, or mac (default: windows)")
 	cmd.Flags().StringVar(&basePath, "base-path", "", "Base install path (game installed in subdirectory)")
 	cmd.Flags().StringVar(&path, "path", "", "Exact install path (no subdirectory created)")
-	cmd.Flags().IntVar(&maxDownloadWorkers, "workers", download.DefaultMaxDownloadWorkers, "Number of parallel download workers")
-	cmd.Flags().IntVar(&maxMemoryUsage, "max-memory", download.DefaultMaxMemoryUsage, "Maximum memory usage for buffering chunks (bytes)")
+	cmd.Flags().IntVar(&maxDownloadWorkers, "workers", defaultMaxWorkers, "Number of parallel download workers")
+	cmd.Flags().IntVar(&maxMemoryUsage, "max-memory", defaultMaxMemory, "Maximum memory usage for buffering chunks (bytes)")
 	cmd.Flags().BoolVarP(&infoOnly, "info", "i", false, "Show download info without downloading")
 	cmd.Flags().BoolVar(&skipVerify, "skip-verify", false, "Skip SHA verification of downloaded chunks")
 	cmd.Flags().BoolVar(&verbose, "verbose", false, "Show per-file progress")

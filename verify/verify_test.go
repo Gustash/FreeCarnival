@@ -1,4 +1,4 @@
-package download
+package verify
 
 import (
 	"crypto/sha256"
@@ -8,10 +8,10 @@ import (
 	"testing"
 
 	"github.com/gustash/freecarnival/auth"
+	"github.com/gustash/freecarnival/manifest"
 )
 
 func TestHashFile(t *testing.T) {
-	// Create a temp file with known content
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "test.txt")
 	content := []byte("hello world")
@@ -19,46 +19,43 @@ func TestHashFile(t *testing.T) {
 		t.Fatalf("failed to write test file: %v", err)
 	}
 
-	// Calculate expected hash
 	hasher := sha256.New()
 	hasher.Write(content)
 	expectedHash := hex.EncodeToString(hasher.Sum(nil))
 
-	// Test hashFile
-	actualHash, err := hashFile(filePath)
+	actualHash, err := HashFile(filePath)
 	if err != nil {
-		t.Fatalf("hashFile failed: %v", err)
+		t.Fatalf("HashFile failed: %v", err)
 	}
 
 	if actualHash != expectedHash {
-		t.Errorf("hashFile() = %q, expected %q", actualHash, expectedHash)
+		t.Errorf("HashFile() = %q, expected %q", actualHash, expectedHash)
 	}
 }
 
 func TestHashFile_NotFound(t *testing.T) {
-	_, err := hashFile("/nonexistent/file.txt")
+	_, err := HashFile("/nonexistent/file.txt")
 	if err == nil {
 		t.Error("expected error for nonexistent file")
 	}
 }
 
-func TestVerifyChunk(t *testing.T) {
+func TestChunk(t *testing.T) {
 	data := []byte("test chunk data")
 	hasher := sha256.New()
 	hasher.Write(data)
 	expectedSHA := hex.EncodeToString(hasher.Sum(nil))
 
-	if !VerifyChunk(data, expectedSHA) {
-		t.Error("VerifyChunk should return true for matching hash")
+	if !Chunk(data, expectedSHA) {
+		t.Error("Chunk should return true for matching hash")
 	}
 
-	if VerifyChunk(data, "wronghash") {
-		t.Error("VerifyChunk should return false for non-matching hash")
+	if Chunk(data, "wronghash") {
+		t.Error("Chunk should return false for non-matching hash")
 	}
 }
 
 func TestVerifyFile_Success(t *testing.T) {
-	// Create a temp directory with a test file
 	dir := t.TempDir()
 	content := []byte("file content for verification")
 	filePath := filepath.Join(dir, "game", "test.txt")
@@ -69,12 +66,11 @@ func TestVerifyFile_Success(t *testing.T) {
 		t.Fatalf("failed to write test file: %v", err)
 	}
 
-	// Calculate SHA
 	hasher := sha256.New()
 	hasher.Write(content)
 	sha := hex.EncodeToString(hasher.Sum(nil))
 
-	record := BuildManifestRecord{
+	record := manifest.BuildRecord{
 		FileName:    filepath.Join("game", "test.txt"),
 		SHA:         sha,
 		SizeInBytes: len(content),
@@ -96,7 +92,7 @@ func TestVerifyFile_Success(t *testing.T) {
 func TestVerifyFile_Missing(t *testing.T) {
 	dir := t.TempDir()
 
-	record := BuildManifestRecord{
+	record := manifest.BuildRecord{
 		FileName:    "missing.txt",
 		SHA:         "abc123",
 		SizeInBytes: 100,
@@ -120,10 +116,10 @@ func TestVerifyFile_WrongSize(t *testing.T) {
 		t.Fatalf("failed to write test file: %v", err)
 	}
 
-	record := BuildManifestRecord{
+	record := manifest.BuildRecord{
 		FileName:    "test.txt",
 		SHA:         "abc123",
-		SizeInBytes: 1000, // Wrong size
+		SizeInBytes: 1000,
 	}
 
 	result := verifyFile(dir, record)
@@ -141,7 +137,7 @@ func TestVerifyFile_WrongHash(t *testing.T) {
 		t.Fatalf("failed to write test file: %v", err)
 	}
 
-	record := BuildManifestRecord{
+	record := manifest.BuildRecord{
 		FileName:    "test.txt",
 		SHA:         "wronghash123456789",
 		SizeInBytes: len(content),
@@ -154,19 +150,16 @@ func TestVerifyFile_WrongHash(t *testing.T) {
 	}
 }
 
-func TestVerifyInstallation_Success(t *testing.T) {
-	// Set up test config directory
+func TestInstallation_Success(t *testing.T) {
 	testDir := t.TempDir()
 	auth.SetTestConfigDir(testDir)
 	defer auth.SetTestConfigDir("")
 
-	// Create a test installation directory
 	installDir := filepath.Join(testDir, "game")
 	if err := os.MkdirAll(installDir, 0o755); err != nil {
 		t.Fatalf("failed to create install dir: %v", err)
 	}
 
-	// Create test files
 	content1 := []byte("file one content")
 	content2 := []byte("file two content with more data")
 
@@ -177,7 +170,6 @@ func TestVerifyInstallation_Success(t *testing.T) {
 		t.Fatalf("failed to write file2: %v", err)
 	}
 
-	// Calculate SHAs
 	hasher1 := sha256.New()
 	hasher1.Write(content1)
 	sha1 := hex.EncodeToString(hasher1.Sum(nil))
@@ -186,29 +178,25 @@ func TestVerifyInstallation_Success(t *testing.T) {
 	hasher2.Write(content2)
 	sha2 := hex.EncodeToString(hasher2.Sum(nil))
 
-	// Create manifest CSV
 	manifestCSV := "Size in Bytes,Chunks,SHA,Flags,File Name,Change Tag\n"
 	manifestCSV += "16,1," + sha1 + ",0,file1.txt,\n"
 	manifestCSV += "31,1," + sha2 + ",0,file2.txt,\n"
 
-	// Save manifest
 	if err := auth.SaveManifest("test-game", "1.0", "manifest", []byte(manifestCSV)); err != nil {
 		t.Fatalf("failed to save manifest: %v", err)
 	}
 
-	// Create install info
 	installInfo := &auth.InstallInfo{
 		InstallPath: installDir,
 		Version:     "1.0",
 		OS:          auth.BuildOSWindows,
 	}
 
-	// Verify
-	opts := VerifyOptions{Verbose: false}
-	valid, results, err := VerifyInstallation("test-game", installInfo, opts)
+	opts := Options{Verbose: false}
+	valid, results, err := Installation("test-game", installInfo, opts)
 
 	if err != nil {
-		t.Fatalf("VerifyInstallation failed: %v", err)
+		t.Fatalf("Installation failed: %v", err)
 	}
 	if !valid {
 		t.Error("expected verification to pass")
@@ -223,45 +211,38 @@ func TestVerifyInstallation_Success(t *testing.T) {
 	}
 }
 
-func TestVerifyInstallation_CorruptedFile(t *testing.T) {
-	// Set up test config directory
+func TestInstallation_CorruptedFile(t *testing.T) {
 	testDir := t.TempDir()
 	auth.SetTestConfigDir(testDir)
 	defer auth.SetTestConfigDir("")
 
-	// Create a test installation directory
 	installDir := filepath.Join(testDir, "game")
 	if err := os.MkdirAll(installDir, 0o755); err != nil {
 		t.Fatalf("failed to create install dir: %v", err)
 	}
 
-	// Create a corrupted file (content doesn't match manifest)
 	if err := os.WriteFile(filepath.Join(installDir, "file.txt"), []byte("corrupted content"), 0o644); err != nil {
 		t.Fatalf("failed to write file: %v", err)
 	}
 
-	// Create manifest with different hash
 	manifestCSV := "Size in Bytes,Chunks,SHA,Flags,File Name,Change Tag\n"
 	manifestCSV += "17,1,wronghashvalue123456,0,file.txt,\n"
 
-	// Save manifest
 	if err := auth.SaveManifest("test-game", "1.0", "manifest", []byte(manifestCSV)); err != nil {
 		t.Fatalf("failed to save manifest: %v", err)
 	}
 
-	// Create install info
 	installInfo := &auth.InstallInfo{
 		InstallPath: installDir,
 		Version:     "1.0",
 		OS:          auth.BuildOSWindows,
 	}
 
-	// Verify
-	opts := VerifyOptions{Verbose: false}
-	valid, results, err := VerifyInstallation("test-game", installInfo, opts)
+	opts := Options{Verbose: false}
+	valid, results, err := Installation("test-game", installInfo, opts)
 
 	if err != nil {
-		t.Fatalf("VerifyInstallation failed: %v", err)
+		t.Fatalf("Installation failed: %v", err)
 	}
 	if valid {
 		t.Error("expected verification to fail for corrupted file")
@@ -271,8 +252,7 @@ func TestVerifyInstallation_CorruptedFile(t *testing.T) {
 	}
 }
 
-func TestVerifyInstallation_MissingManifest(t *testing.T) {
-	// Set up test config directory
+func TestInstallation_MissingManifest(t *testing.T) {
 	testDir := t.TempDir()
 	auth.SetTestConfigDir(testDir)
 	defer auth.SetTestConfigDir("")
@@ -283,28 +263,25 @@ func TestVerifyInstallation_MissingManifest(t *testing.T) {
 		OS:          auth.BuildOSWindows,
 	}
 
-	opts := VerifyOptions{}
-	_, _, err := VerifyInstallation("nonexistent-game", installInfo, opts)
+	opts := Options{}
+	_, _, err := Installation("nonexistent-game", installInfo, opts)
 
 	if err == nil {
 		t.Error("expected error for missing manifest")
 	}
 }
 
-func TestVerifyInstallation_SkipsDirectories(t *testing.T) {
-	// Set up test config directory
+func TestInstallation_SkipsDirectories(t *testing.T) {
 	testDir := t.TempDir()
 	auth.SetTestConfigDir(testDir)
 	defer auth.SetTestConfigDir("")
 
-	// Create a test installation directory with a subdirectory
 	installDir := filepath.Join(testDir, "game")
 	subDir := filepath.Join(installDir, "subdir")
 	if err := os.MkdirAll(subDir, 0o755); err != nil {
 		t.Fatalf("failed to create subdirectory: %v", err)
 	}
 
-	// Create a file
 	content := []byte("test")
 	if err := os.WriteFile(filepath.Join(installDir, "file.txt"), content, 0o644); err != nil {
 		t.Fatalf("failed to write file: %v", err)
@@ -314,12 +291,10 @@ func TestVerifyInstallation_SkipsDirectories(t *testing.T) {
 	hasher.Write(content)
 	sha := hex.EncodeToString(hasher.Sum(nil))
 
-	// Create manifest with both directory and file
 	manifestCSV := "Size in Bytes,Chunks,SHA,Flags,File Name,Change Tag\n"
-	manifestCSV += "0,0,,40,subdir,\n" // Directory (Flags=40)
+	manifestCSV += "0,0,,40,subdir,\n"
 	manifestCSV += "4,1," + sha + ",0,file.txt,\n"
 
-	// Save manifest
 	if err := auth.SaveManifest("test-game", "1.0", "manifest", []byte(manifestCSV)); err != nil {
 		t.Fatalf("failed to save manifest: %v", err)
 	}
@@ -330,17 +305,17 @@ func TestVerifyInstallation_SkipsDirectories(t *testing.T) {
 		OS:          auth.BuildOSWindows,
 	}
 
-	opts := VerifyOptions{}
-	valid, results, err := VerifyInstallation("test-game", installInfo, opts)
+	opts := Options{}
+	valid, results, err := Installation("test-game", installInfo, opts)
 
 	if err != nil {
-		t.Fatalf("VerifyInstallation failed: %v", err)
+		t.Fatalf("Installation failed: %v", err)
 	}
 	if !valid {
 		t.Error("expected verification to pass")
 	}
-	// Should only have 1 result (file), not 2 (directory should be skipped)
 	if len(results) != 1 {
 		t.Errorf("expected 1 result (directory should be skipped), got %d", len(results))
 	}
 }
+

@@ -1,4 +1,5 @@
-package download
+// Package launch handles game executable discovery and launching.
+package launch
 
 import (
 	"fmt"
@@ -11,13 +12,20 @@ import (
 	"github.com/gustash/freecarnival/auth"
 )
 
-// Executable represents a launchable executable
+// Executable represents a launchable executable.
 type Executable struct {
 	Path string
 	Name string
 }
 
-// FindExecutables finds all launchable executables in the install path based on the build OS
+// Options configures how a game is launched.
+type Options struct {
+	WinePath   string // Path to wine executable (default: "wine")
+	WinePrefix string // WINEPREFIX to use (optional)
+	NoWine     bool   // Disable Wine even for Windows executables
+}
+
+// FindExecutables finds all launchable executables in the install path based on the build OS.
 func FindExecutables(installPath string, buildOS auth.BuildOS) ([]Executable, error) {
 	switch buildOS {
 	case auth.BuildOSMac:
@@ -31,7 +39,6 @@ func FindExecutables(installPath string, buildOS auth.BuildOS) ([]Executable, er
 	}
 }
 
-// findMacExecutables finds all .app bundles and their executables
 func findMacExecutables(installPath string) ([]Executable, error) {
 	bundles, err := FindMacAppBundles(installPath)
 	if err != nil {
@@ -41,7 +48,6 @@ func findMacExecutables(installPath string) ([]Executable, error) {
 	var executables []Executable
 	for _, bundle := range bundles {
 		if bundle.ExecutablePath != "" {
-			// Verify the executable exists
 			if _, err := os.Stat(bundle.ExecutablePath); err == nil {
 				name := filepath.Base(bundle.AppPath)
 				executables = append(executables, Executable{
@@ -55,7 +61,6 @@ func findMacExecutables(installPath string) ([]Executable, error) {
 	return executables, nil
 }
 
-// findWindowsExecutables finds all .exe files in the install path
 func findWindowsExecutables(installPath string) ([]Executable, error) {
 	var executables []Executable
 
@@ -64,14 +69,11 @@ func findWindowsExecutables(installPath string) ([]Executable, error) {
 			return err
 		}
 
-		// Skip directories
 		if info.IsDir() {
 			return nil
 		}
 
-		// Look for .exe files
 		if strings.HasSuffix(strings.ToLower(info.Name()), ".exe") {
-			// Skip common non-game executables
 			lowerName := strings.ToLower(info.Name())
 			if isIgnoredExecutable(lowerName) {
 				return nil
@@ -90,7 +92,6 @@ func findWindowsExecutables(installPath string) ([]Executable, error) {
 	return executables, err
 }
 
-// findLinuxExecutables finds executable files in the install path
 func findLinuxExecutables(installPath string) ([]Executable, error) {
 	var executables []Executable
 
@@ -99,20 +100,16 @@ func findLinuxExecutables(installPath string) ([]Executable, error) {
 			return err
 		}
 
-		// Skip directories
 		if info.IsDir() {
 			return nil
 		}
 
-		// Check if file is executable
 		if info.Mode()&0o111 != 0 {
-			// Skip common non-game files
 			lowerName := strings.ToLower(info.Name())
 			if isIgnoredExecutable(lowerName) {
 				return nil
 			}
 
-			// Skip shell scripts and other common non-game executables
 			ext := strings.ToLower(filepath.Ext(info.Name()))
 			if ext == ".sh" || ext == ".py" || ext == ".so" {
 				return nil
@@ -131,7 +128,6 @@ func findLinuxExecutables(installPath string) ([]Executable, error) {
 	return executables, err
 }
 
-// isIgnoredExecutable returns true for common utility executables that aren't the main game
 func isIgnoredExecutable(name string) bool {
 	ignored := []string{
 		"unins000.exe",
@@ -160,30 +156,18 @@ func isIgnoredExecutable(name string) bool {
 	return false
 }
 
-// LaunchOptions configures how a game is launched
-type LaunchOptions struct {
-	// WinePath is the path to wine executable (default: "wine")
-	WinePath string
-	// WinePrefix is the WINEPREFIX to use (optional)
-	WinePrefix string
-	// NoWine disables Wine even for Windows executables
-	NoWine bool
-}
-
-// LaunchGame launches the specified executable with optional arguments
-func LaunchGame(executablePath string, buildOS auth.BuildOS, args []string, opts *LaunchOptions) error {
-	// Verify executable exists
+// Game launches the specified executable with optional arguments.
+func Game(executablePath string, buildOS auth.BuildOS, args []string, opts *Options) error {
 	if _, err := os.Stat(executablePath); os.IsNotExist(err) {
 		return fmt.Errorf("executable not found: %s", executablePath)
 	}
 
 	if opts == nil {
-		opts = &LaunchOptions{}
+		opts = &Options{}
 	}
 
 	// On macOS, use 'open' command for .app bundles
 	if runtime.GOOS == "darwin" && strings.Contains(executablePath, ".app/Contents/MacOS/") {
-		// Extract the .app path
 		appPath := executablePath
 		if idx := strings.Index(executablePath, ".app/"); idx != -1 {
 			appPath = executablePath[:idx+4]
@@ -201,14 +185,12 @@ func LaunchGame(executablePath string, buildOS auth.BuildOS, args []string, opts
 		return cmd.Run()
 	}
 
-	// Check if we need Wine for Windows executables on non-Windows hosts
 	needsWine := buildOS == auth.BuildOSWindows && runtime.GOOS != "windows" && !opts.NoWine
 
 	if needsWine {
 		return launchWithWine(executablePath, args, opts)
 	}
 
-	// For other platforms, run the executable directly
 	cmd := exec.Command(executablePath, args...)
 	cmd.Dir = filepath.Dir(executablePath)
 	cmd.Stdout = os.Stdout
@@ -218,8 +200,7 @@ func LaunchGame(executablePath string, buildOS auth.BuildOS, args []string, opts
 	return cmd.Start()
 }
 
-// launchWithWine launches a Windows executable using Wine
-func launchWithWine(executablePath string, args []string, opts *LaunchOptions) error {
+func launchWithWine(executablePath string, args []string, opts *Options) error {
 	winePath := opts.WinePath
 	if winePath == "" {
 		winePath = findWine()
@@ -229,14 +210,12 @@ func launchWithWine(executablePath string, args []string, opts *LaunchOptions) e
 		return fmt.Errorf("wine not found; install Wine or specify path with --wine")
 	}
 
-	// Create WINEPREFIX directory if it doesn't exist
 	if opts.WinePrefix != "" {
 		if err := os.MkdirAll(opts.WinePrefix, 0o755); err != nil {
 			return fmt.Errorf("failed to create wine prefix directory: %w", err)
 		}
 	}
 
-	// Build wine command: wine <exe> [args...]
 	cmdArgs := append([]string{executablePath}, args...)
 	cmd := exec.Command(winePath, cmdArgs...)
 	cmd.Dir = filepath.Dir(executablePath)
@@ -244,7 +223,6 @@ func launchWithWine(executablePath string, args []string, opts *LaunchOptions) e
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
 
-	// Set WINEPREFIX if specified
 	if opts.WinePrefix != "" {
 		cmd.Env = append(os.Environ(), "WINEPREFIX="+opts.WinePrefix)
 	}
@@ -252,14 +230,11 @@ func launchWithWine(executablePath string, args []string, opts *LaunchOptions) e
 	return cmd.Start()
 }
 
-// findWine searches for Wine in common locations
 func findWine() string {
-	// Check PATH first
 	if path, err := exec.LookPath("wine"); err == nil {
 		return path
 	}
 
-	// Common Wine locations
 	candidates := []string{
 		"/usr/local/bin/wine",
 		"/usr/bin/wine",
@@ -267,7 +242,6 @@ func findWine() string {
 		"/opt/wine-staging/bin/wine",
 	}
 
-	// macOS-specific locations
 	if runtime.GOOS == "darwin" {
 		candidates = append(candidates,
 			"/Applications/Wine Stable.app/Contents/Resources/wine/bin/wine",
@@ -286,14 +260,12 @@ func findWine() string {
 	return ""
 }
 
-// SelectExecutable helps select an executable when multiple are available
-// If exeName is provided, it tries to match it; otherwise returns the first one
+// SelectExecutable helps select an executable when multiple are available.
 func SelectExecutable(executables []Executable, exeName string) (*Executable, error) {
 	if len(executables) == 0 {
 		return nil, fmt.Errorf("no executables found")
 	}
 
-	// If a specific executable name was provided, try to find it
 	if exeName != "" {
 		lowerExeName := strings.ToLower(exeName)
 		for i := range executables {
@@ -306,11 +278,10 @@ func SelectExecutable(executables []Executable, exeName string) (*Executable, er
 		return nil, fmt.Errorf("executable '%s' not found", exeName)
 	}
 
-	// Return the first executable if only one found
 	if len(executables) == 1 {
 		return &executables[0], nil
 	}
 
-	// Multiple executables found, return error with list
 	return nil, fmt.Errorf("multiple executables found, please specify one with --exe")
 }
+

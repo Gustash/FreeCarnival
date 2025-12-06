@@ -1,12 +1,12 @@
-package download
+package progress
 
 import (
 	"testing"
 	"time"
 )
 
-func TestNewProgressTracker(t *testing.T) {
-	pt := NewProgressTracker(1000, 5, false)
+func TestNew(t *testing.T) {
+	pt := New(1000, 5, false)
 	defer pt.Wait()
 
 	if pt.totalBytes != 1000 {
@@ -17,8 +17,8 @@ func TestNewProgressTracker(t *testing.T) {
 	}
 }
 
-func TestProgressTracker_AddFile(t *testing.T) {
-	pt := NewProgressTracker(1000, 2, false)
+func TestTracker_AddFile(t *testing.T) {
+	pt := New(1000, 2, false)
 	defer pt.Wait()
 
 	pt.AddFile(0, "file1.txt", 5, 500, 0)
@@ -43,8 +43,8 @@ func TestProgressTracker_AddFile(t *testing.T) {
 	}
 }
 
-func TestProgressTracker_ChunkDownloaded(t *testing.T) {
-	pt := NewProgressTracker(1000, 1, false)
+func TestTracker_ChunkDownloaded(t *testing.T) {
+	pt := New(1000, 1, false)
 	defer pt.Wait()
 
 	pt.ChunkDownloaded(0, 100)
@@ -56,8 +56,8 @@ func TestProgressTracker_ChunkDownloaded(t *testing.T) {
 	}
 }
 
-func TestProgressTracker_ChunkWritten(t *testing.T) {
-	pt := NewProgressTracker(1000, 1, false)
+func TestTracker_ChunkWritten(t *testing.T) {
+	pt := New(1000, 1, false)
 	defer pt.Wait()
 
 	pt.AddFile(0, "file.txt", 3, 300, 0)
@@ -79,8 +79,8 @@ func TestProgressTracker_ChunkWritten(t *testing.T) {
 	}
 }
 
-func TestProgressTracker_FileComplete(t *testing.T) {
-	pt := NewProgressTracker(1000, 2, false)
+func TestTracker_FileComplete(t *testing.T) {
+	pt := New(1000, 2, false)
 	defer pt.Wait()
 
 	pt.AddFile(0, "file1.txt", 5, 500, 0)
@@ -104,14 +104,13 @@ func TestProgressTracker_FileComplete(t *testing.T) {
 	}
 }
 
-func TestProgressTracker_GetStats(t *testing.T) {
-	pt := NewProgressTracker(1000, 5, false)
+func TestTracker_GetStats(t *testing.T) {
+	pt := New(1000, 5, false)
 	defer pt.Wait()
 
 	pt.FileComplete(0)
 	pt.FileComplete(1)
 
-	// Allow time for speed calculation
 	time.Sleep(150 * time.Millisecond)
 
 	_, _, completed, total := pt.GetStats()
@@ -124,10 +123,9 @@ func TestProgressTracker_GetStats(t *testing.T) {
 	}
 }
 
-func TestProgressTracker_Wait(t *testing.T) {
-	pt := NewProgressTracker(100, 1, false)
+func TestTracker_Wait(t *testing.T) {
+	pt := New(100, 1, false)
 
-	// Wait should complete without blocking indefinitely
 	done := make(chan struct{})
 	go func() {
 		pt.Wait()
@@ -136,16 +134,14 @@ func TestProgressTracker_Wait(t *testing.T) {
 
 	select {
 	case <-done:
-		// Success
 	case <-time.After(1 * time.Second):
 		t.Error("Wait() did not return in time")
 	}
 }
 
-func TestProgressTracker_Abort(t *testing.T) {
-	pt := NewProgressTracker(100, 1, false)
+func TestTracker_Abort(t *testing.T) {
+	pt := New(100, 1, false)
 
-	// Abort should complete without blocking
 	done := make(chan struct{})
 	go func() {
 		pt.Abort()
@@ -154,21 +150,18 @@ func TestProgressTracker_Abort(t *testing.T) {
 
 	select {
 	case <-done:
-		// Success
 	case <-time.After(1 * time.Second):
 		t.Error("Abort() did not return in time")
 	}
 }
 
-func TestProgressTracker_ConcurrentAccess(t *testing.T) {
-	pt := NewProgressTracker(10000, 10, false)
+func TestTracker_ConcurrentAccess(t *testing.T) {
+	pt := New(10000, 10, false)
 
-	// Add files
 	for i := 0; i < 10; i++ {
 		pt.AddFile(i, "file.txt", 10, 1000, 0)
 	}
 
-	// Concurrent chunk downloads and writes
 	done := make(chan struct{})
 	go func() {
 		for i := 0; i < 100; i++ {
@@ -192,7 +185,6 @@ func TestProgressTracker_ConcurrentAccess(t *testing.T) {
 	<-done
 	pt.Wait()
 
-	// Should complete without race conditions
 	if pt.completedFiles.Load() != 10 {
 		t.Errorf("completedFiles = %d, expected 10", pt.completedFiles.Load())
 	}
@@ -217,10 +209,11 @@ func TestFormatBytes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.expected, func(t *testing.T) {
-			result := formatBytes(tt.bytes)
+			result := FormatBytes(tt.bytes)
 			if result != tt.expected {
-				t.Errorf("formatBytes(%d) = %q, expected %q", tt.bytes, result, tt.expected)
+				t.Errorf("FormatBytes(%d) = %q, expected %q", tt.bytes, result, tt.expected)
 			}
 		})
 	}
 }
+

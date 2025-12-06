@@ -1,20 +1,27 @@
-package download
+// Package verify handles file integrity verification.
+package verify
 
 import (
+	"bytes"
 	"crypto/sha256"
+	"encoding/csv"
 	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 
 	"github.com/gustash/freecarnival/auth"
+	"github.com/gustash/freecarnival/manifest"
 )
 
-// VerifyResult contains the result of a file verification
-type VerifyResult struct {
+// Result contains the result of a file verification.
+type Result struct {
 	FilePath string
 	Expected string
 	Actual   string
@@ -22,30 +29,25 @@ type VerifyResult struct {
 	Error    error
 }
 
-// VerifyOptions configures the verification process
-type VerifyOptions struct {
-	// Verbose prints progress for each file
-	Verbose bool
-	// MaxWorkers is the number of parallel verification workers (default: NumCPU)
+// Options configures the verification process.
+type Options struct {
+	Verbose    bool
 	MaxWorkers int
 }
 
-// VerifyInstallation verifies all files in an installation against the manifest
-func VerifyInstallation(slug string, installInfo *auth.InstallInfo, opts VerifyOptions) (bool, []VerifyResult, error) {
-	// Load the saved manifest
+// Installation verifies all files in an installation against the manifest.
+func Installation(slug string, installInfo *auth.InstallInfo, opts Options) (bool, []Result, error) {
 	manifestData, err := auth.LoadManifest(slug, installInfo.Version, "manifest")
 	if err != nil {
 		return false, nil, fmt.Errorf("failed to load manifest: %w", err)
 	}
 
-	// Parse the manifest
-	records, err := parseBuildManifest(manifestData)
+	records, err := parseManifest(manifestData)
 	if err != nil {
 		return false, nil, fmt.Errorf("failed to parse manifest: %w", err)
 	}
 
-	// Filter to only files (not directories)
-	var files []BuildManifestRecord
+	var files []manifest.BuildRecord
 	for _, record := range records {
 		if !record.IsDirectory() {
 			files = append(files, record)
@@ -53,23 +55,19 @@ func VerifyInstallation(slug string, installInfo *auth.InstallInfo, opts VerifyO
 	}
 
 	if len(files) == 0 {
-		return true, nil, nil // No files to verify
+		return true, nil, nil
 	}
 
-	// Set default workers
 	if opts.MaxWorkers <= 0 {
-		opts.MaxWorkers = DefaultMaxDownloadWorkers
+		opts.MaxWorkers = runtime.NumCPU()
 	}
 
-	// Create work channel and results
-	workCh := make(chan BuildManifestRecord, len(files))
-	resultsCh := make(chan VerifyResult, len(files))
+	workCh := make(chan manifest.BuildRecord, len(files))
+	resultsCh := make(chan Result, len(files))
 
-	// Track progress
 	var verified atomic.Int64
 	totalFiles := int64(len(files))
 
-	// Start workers
 	var wg sync.WaitGroup
 	for i := 0; i < opts.MaxWorkers; i++ {
 		wg.Add(1)
@@ -91,18 +89,15 @@ func VerifyInstallation(slug string, installInfo *auth.InstallInfo, opts VerifyO
 		}()
 	}
 
-	// Send work
 	for _, file := range files {
 		workCh <- file
 	}
 	close(workCh)
 
-	// Wait for completion
 	wg.Wait()
 	close(resultsCh)
 
-	// Collect results
-	var results []VerifyResult
+	var results []Result
 	allValid := true
 	for result := range resultsCh {
 		results = append(results, result)
@@ -114,16 +109,14 @@ func VerifyInstallation(slug string, installInfo *auth.InstallInfo, opts VerifyO
 	return allValid, results, nil
 }
 
-// verifyFile verifies a single file against its expected SHA
-func verifyFile(installPath string, record BuildManifestRecord) VerifyResult {
+func verifyFile(installPath string, record manifest.BuildRecord) Result {
 	filePath := filepath.Join(installPath, record.FileName)
 
-	result := VerifyResult{
+	result := Result{
 		FilePath: record.FileName,
 		Expected: record.SHA,
 	}
 
-	// Check if file exists
 	info, err := os.Stat(filePath)
 	if os.IsNotExist(err) {
 		result.Error = fmt.Errorf("file missing")
@@ -136,22 +129,19 @@ func verifyFile(installPath string, record BuildManifestRecord) VerifyResult {
 		return result
 	}
 
-	// Check if it's actually a file
 	if info.IsDir() {
 		result.Error = fmt.Errorf("expected file but found directory")
 		result.Valid = false
 		return result
 	}
 
-	// Check file size
 	if int(info.Size()) != record.SizeInBytes {
 		result.Error = fmt.Errorf("size mismatch: expected %d, got %d", record.SizeInBytes, info.Size())
 		result.Valid = false
 		return result
 	}
 
-	// Calculate SHA256
-	hash, err := hashFile(filePath)
+	hash, err := HashFile(filePath)
 	if err != nil {
 		result.Error = fmt.Errorf("failed to hash file: %w", err)
 		result.Valid = false
@@ -168,8 +158,8 @@ func verifyFile(installPath string, record BuildManifestRecord) VerifyResult {
 	return result
 }
 
-// hashFile calculates the SHA256 hash of a file
-func hashFile(path string) (string, error) {
+// HashFile calculates the SHA256 hash of a file.
+func HashFile(path string) (string, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return "", err
@@ -184,10 +174,60 @@ func hashFile(path string) (string, error) {
 	return hex.EncodeToString(hasher.Sum(nil)), nil
 }
 
-// VerifyChunk verifies a downloaded chunk against its expected SHA
-func VerifyChunk(data []byte, expectedSHA string) bool {
+// Chunk verifies a downloaded chunk against its expected SHA.
+func Chunk(data []byte, expectedSHA string) bool {
 	hasher := sha256.New()
 	hasher.Write(data)
 	actualSHA := hex.EncodeToString(hasher.Sum(nil))
 	return actualSHA == expectedSHA
+}
+
+func parseManifest(data []byte) ([]manifest.BuildRecord, error) {
+	reader := csv.NewReader(bytes.NewReader(data))
+
+	header, err := reader.Read()
+	if err != nil {
+		return nil, fmt.Errorf("failed to read CSV header: %w", err)
+	}
+
+	colIndex := make(map[string]int)
+	for i, col := range header {
+		colIndex[col] = i
+	}
+
+	var records []manifest.BuildRecord
+	for {
+		row, err := reader.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to read CSV row: %w", err)
+		}
+
+		record := manifest.BuildRecord{}
+
+		if idx, ok := colIndex["Size in Bytes"]; ok && idx < len(row) {
+			record.SizeInBytes, _ = strconv.Atoi(row[idx])
+		}
+		if idx, ok := colIndex["Chunks"]; ok && idx < len(row) {
+			record.Chunks, _ = strconv.Atoi(row[idx])
+		}
+		if idx, ok := colIndex["SHA"]; ok && idx < len(row) {
+			record.SHA = row[idx]
+		}
+		if idx, ok := colIndex["Flags"]; ok && idx < len(row) {
+			record.Flags, _ = strconv.Atoi(row[idx])
+		}
+		if idx, ok := colIndex["File Name"]; ok && idx < len(row) {
+			record.FileName = strings.ReplaceAll(row[idx], "\\", "/")
+		}
+		if idx, ok := colIndex["Change Tag"]; ok && idx < len(row) {
+			record.ChangeTag = row[idx]
+		}
+
+		records = append(records, record)
+	}
+
+	return records, nil
 }

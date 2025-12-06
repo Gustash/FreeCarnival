@@ -1,20 +1,255 @@
-package download
+package launch
 
 import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/gustash/freecarnival/auth"
 )
 
+func TestFindExecutables_Mac(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "launch-test-mac-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	appPath := filepath.Join(tmpDir, "TestGame.app")
+	contentsPath := filepath.Join(appPath, "Contents")
+	macOSPath := filepath.Join(contentsPath, "MacOS")
+
+	if err := os.MkdirAll(macOSPath, 0o755); err != nil {
+		t.Fatalf("failed to create directories: %v", err)
+	}
+
+	plistContent := `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleExecutable</key>
+	<string>TestGame</string>
+</dict>
+</plist>`
+
+	if err := os.WriteFile(filepath.Join(contentsPath, "Info.plist"), []byte(plistContent), 0o644); err != nil {
+		t.Fatalf("failed to write Info.plist: %v", err)
+	}
+
+	execPath := filepath.Join(macOSPath, "TestGame")
+	if err := os.WriteFile(execPath, []byte("#!/bin/bash\necho test"), 0o755); err != nil {
+		t.Fatalf("failed to create executable: %v", err)
+	}
+
+	exes, err := FindExecutables(tmpDir, auth.BuildOSMac)
+	if err != nil {
+		t.Fatalf("FindExecutables failed: %v", err)
+	}
+
+	if len(exes) != 1 {
+		t.Errorf("expected 1 executable, got %d", len(exes))
+	}
+
+	if len(exes) > 0 {
+		if exes[0].Path != execPath {
+			t.Errorf("expected path %q, got %q", execPath, exes[0].Path)
+		}
+		if exes[0].Name != "TestGame.app" {
+			t.Errorf("expected name 'TestGame.app', got %q", exes[0].Name)
+		}
+	}
+}
+
+func TestFindExecutables_Windows(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "launch-test-win-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	gameExe := filepath.Join(tmpDir, "Game.exe")
+	launcherExe := filepath.Join(tmpDir, "Launcher.exe")
+	uninstallExe := filepath.Join(tmpDir, "unins000.exe")
+
+	for _, exe := range []string{gameExe, launcherExe, uninstallExe} {
+		if err := os.WriteFile(exe, []byte("mock exe"), 0o644); err != nil {
+			t.Fatalf("failed to create %s: %v", exe, err)
+		}
+	}
+
+	exes, err := FindExecutables(tmpDir, auth.BuildOSWindows)
+	if err != nil {
+		t.Fatalf("FindExecutables failed: %v", err)
+	}
+
+	if len(exes) != 2 {
+		t.Errorf("expected 2 executables (excluding uninstaller), got %d", len(exes))
+		for _, e := range exes {
+			t.Logf("  - %s", e.Name)
+		}
+	}
+
+	for _, e := range exes {
+		if filepath.Base(e.Path) == "unins000.exe" {
+			t.Error("unins000.exe should be excluded")
+		}
+	}
+}
+
+func TestFindExecutables_Linux(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "launch-test-linux-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	gameExe := filepath.Join(tmpDir, "game")
+	launcherExe := filepath.Join(tmpDir, "launcher")
+	scriptFile := filepath.Join(tmpDir, "start.sh")
+	nonExec := filepath.Join(tmpDir, "readme.txt")
+
+	for _, exe := range []string{gameExe, launcherExe} {
+		if err := os.WriteFile(exe, []byte("#!/bin/bash\necho test"), 0o755); err != nil {
+			t.Fatalf("failed to create %s: %v", exe, err)
+		}
+	}
+
+	if err := os.WriteFile(scriptFile, []byte("#!/bin/bash\necho test"), 0o755); err != nil {
+		t.Fatalf("failed to create script: %v", err)
+	}
+
+	if err := os.WriteFile(nonExec, []byte("readme"), 0o644); err != nil {
+		t.Fatalf("failed to create non-exec: %v", err)
+	}
+
+	exes, err := FindExecutables(tmpDir, auth.BuildOSLinux)
+	if err != nil {
+		t.Fatalf("FindExecutables failed: %v", err)
+	}
+
+	if len(exes) != 2 {
+		t.Errorf("expected 2 executables, got %d", len(exes))
+		for _, e := range exes {
+			t.Logf("  - %s", e.Name)
+		}
+	}
+}
+
+func TestSelectExecutable_Single(t *testing.T) {
+	exes := []Executable{
+		{Path: "/path/to/game.exe", Name: "game.exe"},
+	}
+
+	selected, err := SelectExecutable(exes, "")
+	if err != nil {
+		t.Fatalf("SelectExecutable failed: %v", err)
+	}
+
+	if selected.Name != "game.exe" {
+		t.Errorf("expected 'game.exe', got %q", selected.Name)
+	}
+}
+
+func TestSelectExecutable_Multiple_WithName(t *testing.T) {
+	exes := []Executable{
+		{Path: "/path/to/game.exe", Name: "game.exe"},
+		{Path: "/path/to/launcher.exe", Name: "launcher.exe"},
+	}
+
+	selected, err := SelectExecutable(exes, "launcher")
+	if err != nil {
+		t.Fatalf("SelectExecutable failed: %v", err)
+	}
+
+	if selected.Name != "launcher.exe" {
+		t.Errorf("expected 'launcher.exe', got %q", selected.Name)
+	}
+}
+
+func TestSelectExecutable_Multiple_NoName(t *testing.T) {
+	exes := []Executable{
+		{Path: "/path/to/game.exe", Name: "game.exe"},
+		{Path: "/path/to/launcher.exe", Name: "launcher.exe"},
+	}
+
+	_, err := SelectExecutable(exes, "")
+	if err == nil {
+		t.Error("expected error for multiple executables without name")
+	}
+}
+
+func TestSelectExecutable_Empty(t *testing.T) {
+	exes := []Executable{}
+
+	_, err := SelectExecutable(exes, "")
+	if err == nil {
+		t.Error("expected error for empty executables")
+	}
+}
+
+func TestSelectExecutable_NotFound(t *testing.T) {
+	exes := []Executable{
+		{Path: "/path/to/game.exe", Name: "game.exe"},
+	}
+
+	_, err := SelectExecutable(exes, "nonexistent")
+	if err == nil {
+		t.Error("expected error for non-existent executable")
+	}
+}
+
+func TestIsIgnoredExecutable(t *testing.T) {
+	tests := []struct {
+		name     string
+		expected bool
+	}{
+		{"unins000.exe", true},
+		{"uninstall.exe", true},
+		{"crashhandler.exe", true},
+		{"vcredist_x64.exe", true},
+		{"Game.exe", false},
+		{"launcher.exe", false},
+		{"MyGame.exe", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isIgnoredExecutable(tt.name)
+			if got != tt.expected {
+				t.Errorf("isIgnoredExecutable(%q) = %v, expected %v", tt.name, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestFindWine(t *testing.T) {
+	_ = findWine()
+}
+
+func TestOptions(t *testing.T) {
+	opts := &Options{
+		WinePath:   "/custom/wine",
+		WinePrefix: "/home/user/.wine-game",
+		NoWine:     false,
+	}
+
+	if opts.WinePath != "/custom/wine" {
+		t.Errorf("expected WinePath '/custom/wine', got %q", opts.WinePath)
+	}
+	if opts.WinePrefix != "/home/user/.wine-game" {
+		t.Errorf("expected WinePrefix '/home/user/.wine-game', got %q", opts.WinePrefix)
+	}
+}
+
+// Mac-specific tests
+
 func TestFindMacAppBundles(t *testing.T) {
-	// Create a temporary directory structure with a mock .app bundle
 	tmpDir, err := os.MkdirTemp("", "mac-test-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// Create a mock .app bundle structure
 	appPath := filepath.Join(tmpDir, "TestApp.app")
 	contentsPath := filepath.Join(appPath, "Contents")
 	macOSPath := filepath.Join(contentsPath, "MacOS")
@@ -23,7 +258,6 @@ func TestFindMacAppBundles(t *testing.T) {
 		t.Fatalf("failed to create MacOS dir: %v", err)
 	}
 
-	// Create Info.plist
 	infoPlist := `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -40,13 +274,11 @@ func TestFindMacAppBundles(t *testing.T) {
 		t.Fatalf("failed to write Info.plist: %v", err)
 	}
 
-	// Create mock executable
 	executablePath := filepath.Join(macOSPath, "TestApp")
 	if err := os.WriteFile(executablePath, []byte("#!/bin/bash\necho hello"), 0o644); err != nil {
 		t.Fatalf("failed to create mock executable: %v", err)
 	}
 
-	// Test finding the bundle
 	bundles, err := FindMacAppBundles(tmpDir)
 	if err != nil {
 		t.Fatalf("FindMacAppBundles failed: %v", err)
@@ -69,20 +301,17 @@ func TestFindMacAppBundles(t *testing.T) {
 }
 
 func TestMacAppBundle_MarkAsExecutable(t *testing.T) {
-	// Create a temporary directory with a mock executable
 	tmpDir, err := os.MkdirTemp("", "mac-exec-test-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// Create mock executable
 	executablePath := filepath.Join(tmpDir, "TestApp")
 	if err := os.WriteFile(executablePath, []byte("#!/bin/bash\necho hello"), 0o644); err != nil {
 		t.Fatalf("failed to create mock executable: %v", err)
 	}
 
-	// Verify initial permissions are not executable
 	info, err := os.Stat(executablePath)
 	if err != nil {
 		t.Fatalf("failed to stat executable: %v", err)
@@ -91,7 +320,6 @@ func TestMacAppBundle_MarkAsExecutable(t *testing.T) {
 		t.Error("executable should not be executable initially")
 	}
 
-	// Mark as executable
 	bundle := &MacAppBundle{
 		AppPath:        tmpDir,
 		ExecutablePath: executablePath,
@@ -101,7 +329,6 @@ func TestMacAppBundle_MarkAsExecutable(t *testing.T) {
 		t.Fatalf("MarkAsExecutable failed: %v", err)
 	}
 
-	// Verify permissions are now executable
 	info, err = os.Stat(executablePath)
 	if err != nil {
 		t.Fatalf("failed to stat executable after chmod: %v", err)
@@ -142,7 +369,6 @@ func TestParseInfoPlist(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// Create a valid Info.plist
 	infoPlist := `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -174,7 +400,6 @@ func TestParseInfoPlist_InvalidPlist(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// Create invalid plist
 	plistPath := filepath.Join(tmpDir, "Info.plist")
 	if err := os.WriteFile(plistPath, []byte("not a valid plist"), 0o644); err != nil {
 		t.Fatalf("failed to write Info.plist: %v", err)
@@ -194,14 +419,12 @@ func TestParseInfoPlist_NonExistent(t *testing.T) {
 }
 
 func TestMarkMacExecutables(t *testing.T) {
-	// Create a temporary directory with a mock .app bundle
 	tmpDir, err := os.MkdirTemp("", "mark-mac-test-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// Create mock .app structure
 	appPath := filepath.Join(tmpDir, "Game.app")
 	contentsPath := filepath.Join(appPath, "Contents")
 	macOSPath := filepath.Join(contentsPath, "MacOS")
@@ -210,7 +433,6 @@ func TestMarkMacExecutables(t *testing.T) {
 		t.Fatalf("failed to create MacOS dir: %v", err)
 	}
 
-	// Create Info.plist
 	infoPlist := `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -224,18 +446,15 @@ func TestMarkMacExecutables(t *testing.T) {
 		t.Fatalf("failed to write Info.plist: %v", err)
 	}
 
-	// Create mock executable with non-executable permissions
 	executablePath := filepath.Join(macOSPath, "GameLauncher")
 	if err := os.WriteFile(executablePath, []byte("#!/bin/bash\necho game"), 0o644); err != nil {
 		t.Fatalf("failed to create mock executable: %v", err)
 	}
 
-	// Run MarkMacExecutables
 	if err := MarkMacExecutables(tmpDir); err != nil {
 		t.Fatalf("MarkMacExecutables failed: %v", err)
 	}
 
-	// Verify executable permissions
 	info, err := os.Stat(executablePath)
 	if err != nil {
 		t.Fatalf("failed to stat executable: %v", err)
@@ -252,12 +471,10 @@ func TestMarkMacExecutables_NoApps(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// Create a non-.app directory
 	if err := os.MkdirAll(filepath.Join(tmpDir, "SomeFolder"), 0o755); err != nil {
 		t.Fatalf("failed to create dir: %v", err)
 	}
 
-	// Should succeed with no apps found
 	if err := MarkMacExecutables(tmpDir); err != nil {
 		t.Errorf("MarkMacExecutables should succeed with no apps: %v", err)
 	}
@@ -270,7 +487,6 @@ func TestFindMacAppBundles_MultipleApps(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// Create two .app bundles
 	for _, appName := range []string{"App1.app", "App2.app"} {
 		appPath := filepath.Join(tmpDir, appName)
 		contentsPath := filepath.Join(appPath, "Contents")
@@ -280,7 +496,7 @@ func TestFindMacAppBundles_MultipleApps(t *testing.T) {
 			t.Fatalf("failed to create MacOS dir: %v", err)
 		}
 
-		execName := appName[:len(appName)-4] // Remove .app
+		execName := appName[:len(appName)-4]
 		infoPlist := `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -294,7 +510,6 @@ func TestFindMacAppBundles_MultipleApps(t *testing.T) {
 			t.Fatalf("failed to write Info.plist: %v", err)
 		}
 
-		// Create executable
 		if err := os.WriteFile(filepath.Join(macOSPath, execName), []byte("#!/bin/bash"), 0o644); err != nil {
 			t.Fatalf("failed to create executable: %v", err)
 		}
@@ -309,3 +524,4 @@ func TestFindMacAppBundles_MultipleApps(t *testing.T) {
 		t.Errorf("expected 2 bundles, got %d", len(bundles))
 	}
 }
+

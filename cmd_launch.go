@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/gustash/freecarnival/auth"
-	"github.com/gustash/freecarnival/download"
+	"github.com/gustash/freecarnival/launch"
 	"github.com/spf13/cobra"
 )
 
@@ -49,7 +49,7 @@ Use --wine to specify a custom Wine path, or --no-wine to disable Wine.`,
 			}
 
 			// Find executables
-			executables, err := download.FindExecutables(installInfo.InstallPath, installInfo.OS)
+			executables, err := launch.FindExecutables(installInfo.InstallPath, installInfo.OS)
 			if err != nil {
 				return fmt.Errorf("failed to find executables: %w", err)
 			}
@@ -69,9 +69,9 @@ Use --wine to specify a custom Wine path, or --no-wine to disable Wine.`,
 			}
 
 			// Select executable (use first one if multiple found and no --exe specified)
-			var exe *download.Executable
+			var exe *launch.Executable
 			if exeName != "" {
-				exe, err = download.SelectExecutable(executables, exeName)
+				exe, err = launch.SelectExecutable(executables, exeName)
 				if err != nil {
 					return err
 				}
@@ -96,12 +96,12 @@ Use --wine to specify a custom Wine path, or --no-wine to disable Wine.`,
 			}
 
 			// Launch the game
-			launchOpts := &download.LaunchOptions{
+			launchOpts := &launch.Options{
 				WinePath:   winePath,
 				WinePrefix: winePrefix,
 				NoWine:     noWine,
 			}
-			if err := download.LaunchGame(exe.Path, installInfo.OS, gameArgs, launchOpts); err != nil {
+			if err := launch.Game(exe.Path, installInfo.OS, gameArgs, launchOpts); err != nil {
 				return fmt.Errorf("failed to launch game: %w", err)
 			}
 

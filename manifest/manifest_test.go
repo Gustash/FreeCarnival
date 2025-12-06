@@ -1,4 +1,4 @@
-package download
+package manifest
 
 import (
 	"context"
@@ -26,7 +26,6 @@ func TestParseBuildManifest(t *testing.T) {
 		t.Fatalf("expected 3 records, got %d", len(records))
 	}
 
-	// Check first record (file)
 	if records[0].SizeInBytes != 1048576 {
 		t.Errorf("record[0].SizeInBytes = %d, expected 1048576", records[0].SizeInBytes)
 	}
@@ -43,7 +42,6 @@ func TestParseBuildManifest(t *testing.T) {
 		t.Error("record[0] should not be a directory")
 	}
 
-	// Check second record (directory)
 	if records[1].Flags != 40 {
 		t.Errorf("record[1].Flags = %d, expected 40", records[1].Flags)
 	}
@@ -54,7 +52,6 @@ func TestParseBuildManifest(t *testing.T) {
 		t.Error("record[1] should be empty")
 	}
 
-	// Check third record (small file)
 	if records[2].SizeInBytes != 512 {
 		t.Errorf("record[2].SizeInBytes = %d, expected 512", records[2].SizeInBytes)
 	}
@@ -194,13 +191,9 @@ func TestNormalizePath(t *testing.T) {
 }
 
 func TestNormalizePath_PreservesStructure(t *testing.T) {
-	// Test that normalization doesn't lose path components
 	input := `Game\Data\Levels\level1.dat`
 	result := normalizePath(input)
 
-	// Split and verify we still have 4 components
-	components := filepath.SplitList(result)
-	// filepath.SplitList is for PATH-like strings, use manual split
 	if runtime.GOOS == "windows" {
 		if result != `Game\Data\Levels\level1.dat` {
 			t.Errorf("normalizePath(%q) = %q, expected Windows path", input, result)
@@ -210,10 +203,9 @@ func TestNormalizePath_PreservesStructure(t *testing.T) {
 			t.Errorf("normalizePath(%q) = %q, expected Unix path", input, result)
 		}
 	}
-	_ = components // Avoid unused variable warning
 }
 
-func TestFetchBuildManifest_Success(t *testing.T) {
+func TestFetchCSV_Success(t *testing.T) {
 	csvData := `Size in Bytes,Chunks,SHA,Flags,File Name,Change Tag
 1000,1,sha123,0,test.txt,tag
 `
@@ -226,8 +218,6 @@ func TestFetchBuildManifest_Success(t *testing.T) {
 	}))
 	defer server.Close()
 
-	// We can't easily test FetchBuildManifest without modifying ContentURL,
-	// so we test fetchCSV directly
 	client := &http.Client{}
 	data, err := fetchCSV(context.Background(), client, server.URL)
 	if err != nil {
@@ -254,14 +244,13 @@ func TestFetchCSV_HTTPError(t *testing.T) {
 
 func TestFetchCSV_ContextCancellation(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Slow response
 		select {}
 	}))
 	defer server.Close()
 
 	client := &http.Client{}
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // Cancel immediately
+	cancel()
 
 	_, err := fetchCSV(ctx, client, server.URL)
 	if err == nil {
@@ -270,7 +259,6 @@ func TestFetchCSV_ContextCancellation(t *testing.T) {
 }
 
 func TestParseBuildManifest_WithLatin1Filenames(t *testing.T) {
-	// Simulate Latin-1 encoded filename with accented characters
 	csvData := "Size in Bytes,Chunks,SHA,Flags,File Name,Change Tag\n" +
 		"1000,1,sha,0,Mus" + string([]byte{0xe9}) + "e/fichier.txt,tag\n"
 
@@ -283,7 +271,6 @@ func TestParseBuildManifest_WithLatin1Filenames(t *testing.T) {
 		t.Fatalf("expected 1 record, got %d", len(records))
 	}
 
-	// The filename should be properly converted to UTF-8
 	expectedPath := normalizePath("Musée/fichier.txt")
 	if records[0].FileName != expectedPath {
 		t.Errorf("FileName = %q, expected %q", records[0].FileName, expectedPath)
@@ -303,9 +290,71 @@ func TestParseChunksManifest_WithBackslashPaths(t *testing.T) {
 		t.Fatalf("expected 1 record, got %d", len(records))
 	}
 
-	// Path should be normalized to OS-appropriate separator
 	expectedPath := normalizePath("Game/Data/file.txt")
 	if records[0].FilePath != expectedPath {
 		t.Errorf("FilePath = %q, expected %q", records[0].FilePath, expectedPath)
 	}
 }
+
+func TestExtractSHA(t *testing.T) {
+	tests := []struct {
+		name     string
+		chunkID  string
+		expected string
+	}{
+		{"full format", "prefix_0_sha256hash", "sha256hash"},
+		{"no underscore", "sha256hash", "sha256hash"},
+		{"empty", "", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := ExtractSHA(tt.chunkID)
+			if result != tt.expected {
+				t.Errorf("ExtractSHA(%q) = %q, expected %q", tt.chunkID, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestBuildRecord_IsDirectory(t *testing.T) {
+	tests := []struct {
+		name     string
+		flags    int
+		expected bool
+	}{
+		{"directory flag 40", 40, true},
+		{"file flag 0", 0, false},
+		{"other flag 1", 1, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := &BuildRecord{Flags: tt.flags}
+			if got := r.IsDirectory(); got != tt.expected {
+				t.Errorf("IsDirectory() = %v, expected %v", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestBuildRecord_IsEmpty(t *testing.T) {
+	tests := []struct {
+		name        string
+		sizeInBytes int
+		expected    bool
+	}{
+		{"empty file", 0, true},
+		{"non-empty file", 100, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := &BuildRecord{SizeInBytes: tt.sizeInBytes}
+			if got := r.IsEmpty(); got != tt.expected {
+				t.Errorf("IsEmpty() = %v, expected %v", got, tt.expected)
+			}
+		})
+	}
+}
+

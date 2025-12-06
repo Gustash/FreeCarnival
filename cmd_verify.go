@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/gustash/freecarnival/auth"
-	"github.com/gustash/freecarnival/download"
+	"github.com/gustash/freecarnival/verify"
 	"github.com/spf13/cobra"
 )
 
@@ -32,17 +32,17 @@ against the manifest. This ensures no files are corrupted or modified.`,
 			fmt.Printf("Verifying %s (v%s, %s) at %s...\n",
 				slug, installInfo.Version, installInfo.OS, installInfo.InstallPath)
 
-			opts := download.VerifyOptions{
+			opts := verify.Options{
 				Verbose: verbose,
 			}
 
-			valid, results, err := download.VerifyInstallation(slug, installInfo, opts)
+			valid, results, err := verify.Installation(slug, installInfo, opts)
 			if err != nil {
 				return fmt.Errorf("verification failed: %w", err)
 			}
 
 			// Print summary
-			var failed []download.VerifyResult
+			var failed []verify.Result
 			for _, r := range results {
 				if !r.Valid {
 					failed = append(failed, r)

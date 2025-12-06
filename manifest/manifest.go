@@ -1,4 +1,5 @@
-package download
+// Package manifest handles parsing IndieGala build manifests.
+package manifest
 
 import (
 	"bytes"
@@ -14,9 +15,42 @@ import (
 	"github.com/gustash/freecarnival/auth"
 )
 
-// FetchBuildManifest downloads and parses the build manifest for a product version
-// Returns the parsed records and the raw CSV data for caching
-func FetchBuildManifest(ctx context.Context, client *http.Client, product *auth.Product, version *auth.ProductVersion) ([]BuildManifestRecord, []byte, error) {
+// ContentURL is the base URL for downloading game content.
+const ContentURL = "https://content.indiegalacdn.com"
+
+// MaxChunkSize is the maximum size of a single chunk (1 MiB).
+const MaxChunkSize = 1048576
+
+// BuildRecord represents a file entry in the build manifest CSV.
+type BuildRecord struct {
+	SizeInBytes int
+	Chunks      int
+	SHA         string
+	Flags       int
+	FileName    string
+	ChangeTag   string
+}
+
+// IsDirectory returns true if this record represents a directory.
+func (r *BuildRecord) IsDirectory() bool {
+	return r.Flags == 40
+}
+
+// IsEmpty returns true if the file has no content.
+func (r *BuildRecord) IsEmpty() bool {
+	return r.SizeInBytes == 0
+}
+
+// ChunkRecord represents a chunk entry in the chunks manifest CSV.
+type ChunkRecord struct {
+	ID       int
+	FilePath string
+	ChunkSHA string
+}
+
+// FetchBuild downloads and parses the build manifest for a product version.
+// Returns the parsed records and the raw CSV data for caching.
+func FetchBuild(ctx context.Context, client *http.Client, product *auth.Product, version *auth.ProductVersion) ([]BuildRecord, []byte, error) {
 	url := fmt.Sprintf("%s/DevShowCaseSourceVolume/dev_fold_%s/%s/%s/%s_manifest.csv",
 		ContentURL,
 		product.Namespace,
@@ -38,8 +72,8 @@ func FetchBuildManifest(ctx context.Context, client *http.Client, product *auth.
 	return records, data, nil
 }
 
-// FetchChunksManifest downloads and parses the chunks manifest for a product version
-func FetchChunksManifest(ctx context.Context, client *http.Client, product *auth.Product, version *auth.ProductVersion) ([]BuildManifestChunksRecord, error) {
+// FetchChunks downloads and parses the chunks manifest for a product version.
+func FetchChunks(ctx context.Context, client *http.Client, product *auth.Product, version *auth.ProductVersion) ([]ChunkRecord, error) {
 	url := fmt.Sprintf("%s/DevShowCaseSourceVolume/dev_fold_%s/%s/%s/%s_manifest_chunks.csv",
 		ContentURL,
 		product.Namespace,
@@ -54,6 +88,17 @@ func FetchChunksManifest(ctx context.Context, client *http.Client, product *auth
 	}
 
 	return parseChunksManifest(data)
+}
+
+// GetChunkURL returns the download URL for a chunk.
+func GetChunkURL(product *auth.Product, os auth.BuildOS, chunkSHA string) string {
+	return fmt.Sprintf("%s/DevShowCaseSourceVolume/dev_fold_%s/%s/%s/%s",
+		ContentURL,
+		product.Namespace,
+		product.IDKeyName,
+		os,
+		chunkSHA,
+	)
 }
 
 func fetchCSV(ctx context.Context, client *http.Client, url string) ([]byte, error) {
@@ -76,22 +121,20 @@ func fetchCSV(ctx context.Context, client *http.Client, url string) ([]byte, err
 	return io.ReadAll(resp.Body)
 }
 
-func parseBuildManifest(data []byte) ([]BuildManifestRecord, error) {
+func parseBuildManifest(data []byte) ([]BuildRecord, error) {
 	reader := csv.NewReader(bytes.NewReader(data))
 
-	// Read header
 	header, err := reader.Read()
 	if err != nil {
 		return nil, fmt.Errorf("failed to read CSV header: %w", err)
 	}
 
-	// Build column index map
 	colIndex := make(map[string]int)
 	for i, col := range header {
 		colIndex[col] = i
 	}
 
-	var records []BuildManifestRecord
+	var records []BuildRecord
 	for {
 		row, err := reader.Read()
 		if err == io.EOF {
@@ -101,7 +144,7 @@ func parseBuildManifest(data []byte) ([]BuildManifestRecord, error) {
 			return nil, fmt.Errorf("failed to read CSV row: %w", err)
 		}
 
-		record := BuildManifestRecord{}
+		record := BuildRecord{}
 
 		if idx, ok := colIndex["Size in Bytes"]; ok && idx < len(row) {
 			record.SizeInBytes, _ = strconv.Atoi(row[idx])
@@ -116,7 +159,6 @@ func parseBuildManifest(data []byte) ([]BuildManifestRecord, error) {
 			record.Flags, _ = strconv.Atoi(row[idx])
 		}
 		if idx, ok := colIndex["File Name"]; ok && idx < len(row) {
-			// Handle Latin-1 encoding and normalize path separators
 			record.FileName = normalizePath(latin1ToUTF8(row[idx]))
 		}
 		if idx, ok := colIndex["Change Tag"]; ok && idx < len(row) {
@@ -129,22 +171,20 @@ func parseBuildManifest(data []byte) ([]BuildManifestRecord, error) {
 	return records, nil
 }
 
-func parseChunksManifest(data []byte) ([]BuildManifestChunksRecord, error) {
+func parseChunksManifest(data []byte) ([]ChunkRecord, error) {
 	reader := csv.NewReader(bytes.NewReader(data))
 
-	// Read header
 	header, err := reader.Read()
 	if err != nil {
 		return nil, fmt.Errorf("failed to read CSV header: %w", err)
 	}
 
-	// Build column index map
 	colIndex := make(map[string]int)
 	for i, col := range header {
 		colIndex[col] = i
 	}
 
-	var records []BuildManifestChunksRecord
+	var records []ChunkRecord
 	for {
 		row, err := reader.Read()
 		if err == io.EOF {
@@ -154,13 +194,12 @@ func parseChunksManifest(data []byte) ([]BuildManifestChunksRecord, error) {
 			return nil, fmt.Errorf("failed to read CSV row: %w", err)
 		}
 
-		record := BuildManifestChunksRecord{}
+		record := ChunkRecord{}
 
 		if idx, ok := colIndex["ID"]; ok && idx < len(row) {
 			record.ID, _ = strconv.Atoi(row[idx])
 		}
 		if idx, ok := colIndex["Filepath"]; ok && idx < len(row) {
-			// Handle Latin-1 encoding and normalize path separators
 			record.FilePath = normalizePath(latin1ToUTF8(row[idx]))
 		}
 		if idx, ok := colIndex["Chunk SHA"]; ok && idx < len(row) {
@@ -173,33 +212,29 @@ func parseChunksManifest(data []byte) ([]BuildManifestChunksRecord, error) {
 	return records, nil
 }
 
-// GetChunkURL returns the download URL for a chunk
-func GetChunkURL(product *auth.Product, os auth.BuildOS, chunkSHA string) string {
-	return fmt.Sprintf("%s/DevShowCaseSourceVolume/dev_fold_%s/%s/%s/%s",
-		ContentURL,
-		product.Namespace,
-		product.IDKeyName,
-		os,
-		chunkSHA,
-	)
-}
-
 // latin1ToUTF8 converts a Latin-1 (ISO-8859-1) encoded string to UTF-8.
-// The CSV manifests from IndieGala contain Latin-1 encoded filenames.
 func latin1ToUTF8(s string) string {
 	var buf strings.Builder
-	buf.Grow(len(s) * 2) // Worst case: all bytes become 2-byte UTF-8
+	buf.Grow(len(s) * 2)
 	for i := 0; i < len(s); i++ {
 		buf.WriteRune(rune(s[i]))
 	}
 	return buf.String()
 }
 
-// normalizePath converts Windows-style backslashes to OS-appropriate separators
-// and ensures the path is valid for the current filesystem.
+// normalizePath converts Windows-style backslashes to OS-appropriate separators.
 func normalizePath(path string) string {
-	// Convert backslashes to forward slashes first
 	path = strings.ReplaceAll(path, "\\", "/")
-	// Then convert to OS-appropriate separator
 	return filepath.FromSlash(path)
 }
+
+// ExtractSHA extracts the actual SHA256 hash from a chunk identifier.
+// Chunk identifiers are in the format: {prefix}_{index}_{sha256}
+func ExtractSHA(chunkID string) string {
+	lastUnderscore := strings.LastIndex(chunkID, "_")
+	if lastUnderscore == -1 {
+		return chunkID
+	}
+	return chunkID[lastUnderscore+1:]
+}
+

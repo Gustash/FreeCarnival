@@ -12,29 +12,9 @@ import (
 
 const baseURL = "https://www.indiegala.com"
 
+// Session holds authentication cookies for IndieGala.
 type Session struct {
 	Cookies []*http.Cookie `json:"cookies"`
-}
-
-// testConfigDir can be set during tests to override the config directory
-var testConfigDir string
-
-// SetTestConfigDir sets the config directory for testing purposes.
-// Pass empty string to reset to default behavior.
-func SetTestConfigDir(dir string) {
-	testConfigDir = dir
-}
-
-// configDir returns something like ~/.config/FreeCarnival
-func configDir() (string, error) {
-	if testConfigDir != "" {
-		return testConfigDir, nil
-	}
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, "FreeCarnival"), nil
 }
 
 func sessionFilePath() (string, error) {
