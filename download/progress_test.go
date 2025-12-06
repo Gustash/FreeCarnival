@@ -6,7 +6,7 @@ import (
 )
 
 func TestNewProgressTracker(t *testing.T) {
-	pt := NewProgressTracker(1000, 5)
+	pt := NewProgressTracker(1000, 5, false)
 	defer pt.Wait()
 
 	if pt.totalBytes != 1000 {
@@ -18,7 +18,7 @@ func TestNewProgressTracker(t *testing.T) {
 }
 
 func TestProgressTracker_AddFile(t *testing.T) {
-	pt := NewProgressTracker(1000, 2)
+	pt := NewProgressTracker(1000, 2, false)
 	defer pt.Wait()
 
 	pt.AddFile(0, "file1.txt", 5, 500)
@@ -44,7 +44,7 @@ func TestProgressTracker_AddFile(t *testing.T) {
 }
 
 func TestProgressTracker_ChunkDownloaded(t *testing.T) {
-	pt := NewProgressTracker(1000, 1)
+	pt := NewProgressTracker(1000, 1, false)
 	defer pt.Wait()
 
 	pt.ChunkDownloaded(0, 100)
@@ -57,7 +57,7 @@ func TestProgressTracker_ChunkDownloaded(t *testing.T) {
 }
 
 func TestProgressTracker_ChunkWritten(t *testing.T) {
-	pt := NewProgressTracker(1000, 1)
+	pt := NewProgressTracker(1000, 1, false)
 	defer pt.Wait()
 
 	pt.AddFile(0, "file.txt", 3, 300)
@@ -80,7 +80,7 @@ func TestProgressTracker_ChunkWritten(t *testing.T) {
 }
 
 func TestProgressTracker_FileComplete(t *testing.T) {
-	pt := NewProgressTracker(1000, 2)
+	pt := NewProgressTracker(1000, 2, false)
 	defer pt.Wait()
 
 	pt.AddFile(0, "file1.txt", 5, 500)
@@ -105,7 +105,7 @@ func TestProgressTracker_FileComplete(t *testing.T) {
 }
 
 func TestProgressTracker_GetStats(t *testing.T) {
-	pt := NewProgressTracker(1000, 5)
+	pt := NewProgressTracker(1000, 5, false)
 	defer pt.Wait()
 
 	pt.FileComplete(0)
@@ -125,7 +125,7 @@ func TestProgressTracker_GetStats(t *testing.T) {
 }
 
 func TestProgressTracker_Wait(t *testing.T) {
-	pt := NewProgressTracker(100, 1)
+	pt := NewProgressTracker(100, 1, false)
 
 	// Wait should complete without blocking indefinitely
 	done := make(chan struct{})
@@ -143,7 +143,7 @@ func TestProgressTracker_Wait(t *testing.T) {
 }
 
 func TestProgressTracker_Abort(t *testing.T) {
-	pt := NewProgressTracker(100, 1)
+	pt := NewProgressTracker(100, 1, false)
 
 	// Abort should complete without blocking
 	done := make(chan struct{})
@@ -161,7 +161,7 @@ func TestProgressTracker_Abort(t *testing.T) {
 }
 
 func TestProgressTracker_ConcurrentAccess(t *testing.T) {
-	pt := NewProgressTracker(10000, 10)
+	pt := NewProgressTracker(10000, 10, false)
 
 	// Add files
 	for i := 0; i < 10; i++ {

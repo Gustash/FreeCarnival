@@ -21,6 +21,7 @@ func newInstallCmd() *cobra.Command {
 		maxMemoryUsage     int
 		infoOnly           bool
 		skipVerify         bool
+		verbose            bool
 	)
 
 	cmd := &cobra.Command{
@@ -119,6 +120,7 @@ the latest version for the current OS will be used.`,
 				MaxMemoryUsage:     maxMemoryUsage,
 				SkipVerify:         skipVerify,
 				InfoOnly:           infoOnly,
+				Verbose:            verbose,
 			}
 
 			// Create downloader and start download
@@ -160,6 +162,7 @@ the latest version for the current OS will be used.`,
 	cmd.Flags().IntVar(&maxMemoryUsage, "max-memory", download.DefaultMaxMemoryUsage, "Maximum memory usage for buffering chunks (bytes)")
 	cmd.Flags().BoolVarP(&infoOnly, "info", "i", false, "Show download info without downloading")
 	cmd.Flags().BoolVar(&skipVerify, "skip-verify", false, "Skip SHA verification of downloaded chunks")
+	cmd.Flags().BoolVar(&verbose, "verbose", false, "Show per-file progress")
 
 	return cmd
 }

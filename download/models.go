@@ -41,6 +41,8 @@ type DownloadOptions struct {
 	SkipVerify bool
 	// InfoOnly prints download info without actually downloading
 	InfoOnly bool
+	// Verbose shows per-file progress instead of just overall progress
+	Verbose bool
 }
 
 // DefaultDownloadOptions returns download options with sensible defaults
@@ -83,4 +85,3 @@ type FileWriteJob struct {
 	TotalChunks int
 	TotalSize   int
 }
-

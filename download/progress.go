@@ -34,6 +34,7 @@ type ProgressTracker struct {
 	stopChan   chan struct{}
 	doneChan   chan struct{}
 	linesDrawn int
+	verbose    bool
 }
 
 type fileProgress struct {
@@ -46,7 +47,7 @@ type fileProgress struct {
 }
 
 // NewProgressTracker creates a new progress tracker
-func NewProgressTracker(totalBytes int64, totalFiles int) *ProgressTracker {
+func NewProgressTracker(totalBytes int64, totalFiles int, verbose bool) *ProgressTracker {
 	pt := &ProgressTracker{
 		totalBytes:      totalBytes,
 		totalFiles:      totalFiles,
@@ -54,6 +55,7 @@ func NewProgressTracker(totalBytes int64, totalFiles int) *ProgressTracker {
 		lastSpeedUpdate: time.Now(),
 		stopChan:        make(chan struct{}),
 		doneChan:        make(chan struct{}),
+		verbose:         verbose,
 	}
 
 	// Start the display loop
@@ -118,58 +120,60 @@ func (pt *ProgressTracker) render() {
 	dskSpeed := pt.diskSpeed.Load()
 	completed := pt.completedFiles.Load()
 
-	// File list (sorted by index for stable display)
-	pt.filesMu.RLock()
-	indices := make([]int, 0, len(pt.files))
-	for idx := range pt.files {
-		indices = append(indices, idx)
+	// File list (only in verbose mode)
+	if pt.verbose {
+		pt.filesMu.RLock()
+		indices := make([]int, 0, len(pt.files))
+		for idx := range pt.files {
+			indices = append(indices, idx)
+		}
+		sort.Ints(indices)
+
+		for _, idx := range indices {
+			fp := pt.files[idx]
+			chunksWritten := fp.chunksWritten.Load()
+			filePercent := float64(0)
+			if fp.totalChunks > 0 {
+				filePercent = float64(chunksWritten) / float64(fp.totalChunks) * 100
+			}
+
+			// Status indicator
+			status := "⏳"
+			if fp.complete {
+				status = "✓ "
+			}
+
+			// Truncate filename
+			name := fp.fileName
+			if len(name) > 45 {
+				name = "..." + name[len(name)-42:]
+			}
+
+			// Mini progress bar for file
+			fileBarWidth := 20
+			fileFilled := int(filePercent / 100 * float64(fileBarWidth))
+			if fileFilled < 0 {
+				fileFilled = 0
+			}
+			if fileFilled > fileBarWidth {
+				fileFilled = fileBarWidth
+			}
+			fileBar := strings.Repeat("█", fileFilled) + strings.Repeat("░", fileBarWidth-fileFilled)
+
+			lines = append(lines, fmt.Sprintf(
+				"\033[K%s %-45s [%s] %5.1f%%",
+				status,
+				name,
+				fileBar,
+				filePercent,
+			))
+		}
+		pt.filesMu.RUnlock()
+
+		lines = append(lines, "\033[K") // Empty separator line
 	}
-	sort.Ints(indices)
 
-	for _, idx := range indices {
-		fp := pt.files[idx]
-		chunksWritten := fp.chunksWritten.Load()
-		filePercent := float64(0)
-		if fp.totalChunks > 0 {
-			filePercent = float64(chunksWritten) / float64(fp.totalChunks) * 100
-		}
-
-		// Status indicator
-		status := "⏳"
-		if fp.complete {
-			status = "✓ "
-		}
-
-		// Truncate filename
-		name := fp.fileName
-		if len(name) > 45 {
-			name = "..." + name[len(name)-42:]
-		}
-
-		// Mini progress bar for file
-		fileBarWidth := 20
-		fileFilled := int(filePercent / 100 * float64(fileBarWidth))
-		if fileFilled < 0 {
-			fileFilled = 0
-		}
-		if fileFilled > fileBarWidth {
-			fileFilled = fileBarWidth
-		}
-		fileBar := strings.Repeat("█", fileFilled) + strings.Repeat("░", fileBarWidth-fileFilled)
-
-		lines = append(lines, fmt.Sprintf(
-			"\033[K%s %-45s [%s] %5.1f%%",
-			status,
-			name,
-			fileBar,
-			filePercent,
-		))
-	}
-	pt.filesMu.RUnlock()
-
-	lines = append(lines, "\033[K") // Empty separator line
-
-	// Progress bar at the bottom
+	// Progress bar
 	barWidth := 60
 	filled := int(percent / 100 * float64(barWidth))
 	if filled < 0 {

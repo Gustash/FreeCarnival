@@ -196,7 +196,7 @@ func (d *Downloader) Download(ctx context.Context, installPath string) error {
 	}
 
 	// Create progress tracker
-	d.progress = NewProgressTracker(d.totalBytes, d.totalFiles)
+	d.progress = NewProgressTracker(d.totalBytes, d.totalFiles, d.options.Verbose)
 
 	// Add all files to the progress tracker
 	for _, info := range fileInfoMap {
