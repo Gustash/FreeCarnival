@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"path/filepath"
 )
 
 const userInfoPath = "/login_new/user_info"
@@ -63,28 +62,16 @@ type StoredUserInfo struct {
 }
 
 func userFilePath() (string, error) {
-	dir, err := configDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, "user.json"), nil
+	return configFile("user.json")
 }
 
 func libraryFilePath() (string, error) {
-	dir, err := configDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, "library.json"), nil
+	return configFile("library.json")
 }
 
 func SaveUserInfo(ui *StoredUserInfo) error {
 	path, err := userFilePath()
 	if err != nil {
-		return err
-	}
-
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
 
@@ -99,10 +86,6 @@ func SaveUserInfo(ui *StoredUserInfo) error {
 func SaveLibrary(products []Product) error {
 	path, err := libraryFilePath()
 	if err != nil {
-		return err
-	}
-
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
 

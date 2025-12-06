@@ -7,7 +7,6 @@ import (
 	"net/http/cookiejar"
 	"net/url"
 	"os"
-	"path/filepath"
 )
 
 const baseURL = "https://www.indiegala.com"
@@ -18,20 +17,12 @@ type Session struct {
 }
 
 func sessionFilePath() (string, error) {
-	dir, err := configDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, "session.json"), nil
+	return configFile("session.json")
 }
 
 func SaveSession(sess *Session) error {
 	path, err := sessionFilePath()
 	if err != nil {
-		return err
-	}
-
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
 

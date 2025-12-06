@@ -21,21 +21,13 @@ type InstallInfo struct {
 type InstalledConfig map[string]*InstallInfo
 
 func installedFilePath() (string, error) {
-	dir, err := configDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, "installed.json"), nil
+	return configFile("installed.json")
 }
 
 // SaveInstalled saves the installed games config to disk
 func SaveInstalled(installed InstalledConfig) error {
 	path, err := installedFilePath()
 	if err != nil {
-		return err
-	}
-
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
 

@@ -26,8 +26,8 @@ func configDir() (string, error) {
 	return filepath.Join(dir, "FreeCarnival"), nil
 }
 
-// ensureConfigDir creates the config directory if it doesn't exist
-func ensureConfigDir() (string, error) {
+// configFile returns the path to the config file
+func configFile(filename string) (string, error) {
 	dir, err := configDir()
 	if err != nil {
 		return "", err
@@ -35,5 +35,5 @@ func ensureConfigDir() (string, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}
-	return dir, nil
+	return filepath.Join(dir, filename), nil
 }
