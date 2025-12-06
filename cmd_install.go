@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -122,7 +123,14 @@ the latest version for the current OS will be used.`,
 
 			// Create downloader and start download
 			downloader := download.NewDownloader(client, product, productVersion, opts)
-			if err := downloader.Download(cmd.Context(), installPath); err != nil {
+			err = downloader.Download(cmd.Context(), installPath)
+
+			// Check if download was cancelled (Ctrl+C)
+			if err == context.Canceled {
+				return nil // Exit cleanly without error
+			}
+
+			if err != nil {
 				return fmt.Errorf("download failed: %w", err)
 			}
 

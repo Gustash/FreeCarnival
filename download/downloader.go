@@ -216,6 +216,14 @@ func (d *Downloader) Download(ctx context.Context, installPath string) error {
 	// Start download workers and file writers
 	err = d.downloadAndWrite(ctx, fileChunks, fileInfoMap, resumeState)
 
+	// Check if download was cancelled (even if err is nil due to graceful shutdown)
+	if ctx.Err() == context.Canceled {
+		d.progress.Abort()
+		fmt.Println("\n\nDownload paused. Progress has been saved.")
+		fmt.Println("Run the same install command again to resume from where you left off.")
+		return context.Canceled
+	}
+
 	if err != nil {
 		d.progress.Abort()
 		return err
@@ -426,52 +434,42 @@ func (d *Downloader) downloadAndWrite(ctx context.Context, fileChunks map[int][]
 }
 
 func (d *Downloader) downloadWorkerWithRouting(ctx context.Context, jobs <-chan ChunkDownload, fileChannels map[int]chan DownloadedChunk) {
-	for {
-		select {
-		case <-ctx.Done():
+	for job := range jobs {
+		// Wait for memory to be available (but don't exit on cancel - we want to finish pending jobs)
+		d.waitForMemory(ctx, MaxChunkSize)
+
+		// Download the chunk
+		data, err := d.downloadChunk(ctx, job.FileIndex, job.ChunkSHA)
+
+		// If download was cancelled, skip this chunk (don't send it)
+		// The file will be incomplete and will be resumed on next run
+		if err == context.Canceled {
+			if data != nil {
+				d.releaseMemory(int64(len(data)))
+			}
 			return
-		case job, ok := <-jobs:
-			if !ok {
-				return
-			}
+		}
 
-			// Wait for memory to be available
-			d.waitForMemory(ctx, MaxChunkSize)
-			if ctx.Err() != nil {
-				return
-			}
+		result := DownloadedChunk{
+			FileIndex:  job.FileIndex,
+			ChunkIndex: job.ChunkIndex,
+			Data:       data,
+			Error:      err,
+		}
 
-			// Download the chunk
-			data, err := d.downloadChunk(ctx, job.FileIndex, job.ChunkSHA)
-
-			result := DownloadedChunk{
-				FileIndex:  job.FileIndex,
-				ChunkIndex: job.ChunkIndex,
-				Data:       data,
-				Error:      err,
-			}
-
-			if err == nil && !d.options.SkipVerify {
-				// Verify chunk SHA
-				expectedSHA := extractSHA(job.ChunkSHA)
-				if !VerifyChunk(data, expectedSHA) {
-					result.Error = fmt.Errorf("SHA mismatch for chunk %s", job.ChunkSHA)
-					result.Data = nil
-					d.releaseMemory(int64(len(data)))
-				}
-			}
-
-			// Route to the appropriate file channel
-			fileChan := fileChannels[job.FileIndex]
-			select {
-			case <-ctx.Done():
-				if result.Data != nil {
-					d.releaseMemory(int64(len(result.Data)))
-				}
-				return
-			case fileChan <- result:
+		if err == nil && !d.options.SkipVerify {
+			// Verify chunk SHA
+			expectedSHA := extractSHA(job.ChunkSHA)
+			if !VerifyChunk(data, expectedSHA) {
+				result.Error = fmt.Errorf("SHA mismatch for chunk %s", job.ChunkSHA)
+				result.Data = nil
+				d.releaseMemory(int64(len(data)))
 			}
 		}
+
+		// Send the result to file writer
+		fileChan := fileChannels[job.FileIndex]
+		fileChan <- result
 	}
 }
 
@@ -507,66 +505,76 @@ func (d *Downloader) singleFileWriter(ctx context.Context, info *fileInfo, chunk
 	bw := bufio.NewWriterSize(f, 4*1024*1024)
 	defer bw.Flush()
 
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case result, ok := <-chunks:
-			if !ok {
-				// Channel closed - check if we got all chunks
-				if nextChunkIndex < totalChunks {
-					return fmt.Errorf("file %s incomplete: got %d/%d chunks", info.FullPath, nextChunkIndex, totalChunks)
+	for result := range chunks {
+		if result.Error != nil {
+			return fmt.Errorf("download error for %s: %w", info.FullPath, result.Error)
+		}
+
+		chunkIdx := result.ChunkIndex
+
+		if chunkIdx == nextChunkIndex {
+			// Write this chunk and any pending sequential chunks
+			if err := d.writeChunkBuffered(bw, result.Data, info.Index, info.FullPath); err != nil {
+				return err
+			}
+			nextChunkIndex++
+
+			// Write any pending sequential chunks
+			for {
+				pendingData, exists := pendingChunks[nextChunkIndex]
+				if !exists {
+					break
 				}
-				// Flush buffered writer before returning
+				if err := d.writeChunkBuffered(bw, pendingData, info.Index, info.FullPath); err != nil {
+					return err
+				}
+				delete(pendingChunks, nextChunkIndex)
+				nextChunkIndex++
+			}
+
+			// Check if file is complete
+			if nextChunkIndex >= totalChunks {
+				if d.progress != nil {
+					d.progress.FileComplete(info.Index)
+				}
+				// Flush before returning success
 				if err := bw.Flush(); err != nil {
 					return fmt.Errorf("failed to flush %s: %w", info.FullPath, err)
 				}
 				return nil
 			}
-
-			if result.Error != nil {
-				return fmt.Errorf("download error for %s: %w", info.FullPath, result.Error)
-			}
-
-			chunkIdx := result.ChunkIndex
-
-			if chunkIdx == nextChunkIndex {
-				// Write this chunk and any pending sequential chunks
-				if err := d.writeChunkBuffered(bw, result.Data, info.Index, info.FullPath); err != nil {
-					return err
-				}
-				nextChunkIndex++
-
-				// Write any pending sequential chunks
-				for {
-					pendingData, exists := pendingChunks[nextChunkIndex]
-					if !exists {
-						break
-					}
-					if err := d.writeChunkBuffered(bw, pendingData, info.Index, info.FullPath); err != nil {
-						return err
-					}
-					delete(pendingChunks, nextChunkIndex)
-					nextChunkIndex++
-				}
-
-				// Check if file is complete
-				if nextChunkIndex >= totalChunks {
-					if d.progress != nil {
-						d.progress.FileComplete(info.Index)
-					}
-					// Flush before returning success
-					if err := bw.Flush(); err != nil {
-						return fmt.Errorf("failed to flush %s: %w", info.FullPath, err)
-					}
-					return nil
-				}
-			} else {
-				// Store for later (out of order)
-				pendingChunks[chunkIdx] = result.Data
-			}
+		} else {
+			// Store for later (out of order)
+			pendingChunks[chunkIdx] = result.Data
 		}
 	}
+
+	// Channel closed - write any remaining sequential pending chunks
+	for {
+		pendingData, exists := pendingChunks[nextChunkIndex]
+		if !exists {
+			break
+		}
+		if err := d.writeChunkBuffered(bw, pendingData, info.Index, info.FullPath); err != nil {
+			return err
+		}
+		delete(pendingChunks, nextChunkIndex)
+		nextChunkIndex++
+	}
+	// Flush buffered data
+	if err := bw.Flush(); err != nil {
+		return fmt.Errorf("failed to flush %s: %w", info.FullPath, err)
+	}
+	// Check if we got all chunks
+	if nextChunkIndex < totalChunks {
+		// File is incomplete - check if context was cancelled
+		if ctx.Err() != nil {
+			// Graceful shutdown - incomplete is expected
+			return nil
+		}
+		return fmt.Errorf("file %s incomplete: got %d/%d chunks", info.FullPath, nextChunkIndex, totalChunks)
+	}
+	return nil
 }
 
 func (d *Downloader) writeChunkBuffered(bw *bufio.Writer, data []byte, fileIndex int, filePath string) error {

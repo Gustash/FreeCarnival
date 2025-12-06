@@ -238,7 +238,7 @@ func (rc *ResumeChecker) checkFile(info *fileInfo) checkResult {
 		}
 		chunkData = chunkData[:n]
 
-		expectedSHA := chunks[i].ChunkSHA
+		expectedSHA := extractSHA(chunks[i].ChunkSHA)
 		if !VerifyChunk(chunkData, expectedSHA) {
 			// Chunk is corrupted - stop here, resume from this chunk
 			break

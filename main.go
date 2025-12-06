@@ -2,9 +2,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 
 	"github.com/spf13/cobra"
 )
@@ -19,6 +22,20 @@ func defaultInstallBasePath() string {
 }
 
 func main() {
+	// Set up context with signal handling for graceful shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Handle SIGINT (Ctrl+C) and SIGTERM for graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+	go func() {
+		<-sigChan
+		fmt.Fprintln(os.Stderr, "\n\nReceived interrupt signal, shutting down gracefully...")
+		cancel()
+	}()
+
 	rootCmd := &cobra.Command{
 		Use:   "freecarnival",
 		Short: "CLI for IndieGala",
@@ -35,7 +52,7 @@ func main() {
 	rootCmd.AddCommand(newLaunchCmd())
 	rootCmd.AddCommand(newListUpdatesCmd())
 
-	if err := rootCmd.Execute(); err != nil {
+	if err := rootCmd.ExecuteContext(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
