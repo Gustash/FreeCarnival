@@ -230,33 +230,40 @@ func launchWithWine(executablePath string, args []string, opts *Options) error {
 	return cmd.Start()
 }
 
+var defaultWineCandidates = []string{
+	"/usr/local/bin/wine",
+	"/usr/bin/wine",
+	"/opt/wine-stable/bin/wine",
+	"/opt/wine-staging/bin/wine",
+}
+
+var macWineCandidates = []string{
+	"/Applications/Wine Stable.app/Contents/Resources/wine/bin/wine",
+	"/Applications/Wine Staging.app/Contents/Resources/wine/bin/wine",
+	"/opt/homebrew/bin/wine",
+	"/usr/local/opt/wine/bin/wine",
+}
+
 func findWine() string {
+	// First check if wine is in PATH
 	if path, err := exec.LookPath("wine"); err == nil {
 		return path
 	}
 
-	candidates := []string{
-		"/usr/local/bin/wine",
-		"/usr/bin/wine",
-		"/opt/wine-stable/bin/wine",
-		"/opt/wine-staging/bin/wine",
-	}
-
+	// Otherwise check candidate paths
+	candidates := defaultWineCandidates
 	if runtime.GOOS == "darwin" {
-		candidates = append(candidates,
-			"/Applications/Wine Stable.app/Contents/Resources/wine/bin/wine",
-			"/Applications/Wine Staging.app/Contents/Resources/wine/bin/wine",
-			"/opt/homebrew/bin/wine",
-			"/usr/local/opt/wine/bin/wine",
-		)
+		candidates = append(append([]string{}, defaultWineCandidates...), macWineCandidates...)
 	}
+	return findWineInCandidates(candidates)
+}
 
+func findWineInCandidates(candidates []string) string {
 	for _, path := range candidates {
 		if _, err := os.Stat(path); err == nil {
 			return path
 		}
 	}
-
 	return ""
 }
 
@@ -284,4 +291,3 @@ func SelectExecutable(executables []Executable, exeName string) (*Executable, er
 
 	return nil, fmt.Errorf("multiple executables found, please specify one with --exe")
 }
-

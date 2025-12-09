@@ -222,8 +222,101 @@ func TestIsIgnoredExecutable(t *testing.T) {
 	}
 }
 
-func TestFindWine(t *testing.T) {
-	_ = findWine()
+func TestFindWineInCandidates_Found(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "wine-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create a fake wine executable
+	fakeWinePath := filepath.Join(tmpDir, "wine")
+	if err := os.WriteFile(fakeWinePath, []byte("#!/bin/bash\necho fake wine"), 0o755); err != nil {
+		t.Fatalf("failed to create fake wine: %v", err)
+	}
+
+	// Create another fake candidate that doesn't exist
+	nonExistentPath := filepath.Join(tmpDir, "nonexistent", "wine")
+
+	// Test with custom candidates
+	candidates := []string{
+		nonExistentPath, // This one doesn't exist
+		fakeWinePath,    // This one exists
+	}
+
+	winePath := findWineInCandidates(candidates)
+	if winePath != fakeWinePath {
+		t.Errorf("expected to find wine at %q, got %q", fakeWinePath, winePath)
+	}
+}
+
+func TestFindWineInCandidates_NotFound(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "wine-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Test with candidates that don't exist
+	candidates := []string{
+		filepath.Join(tmpDir, "nonexistent1", "wine"),
+		filepath.Join(tmpDir, "nonexistent2", "wine"),
+	}
+
+	winePath := findWineInCandidates(candidates)
+	if winePath != "" {
+		t.Errorf("expected empty string when wine not found, got %q", winePath)
+	}
+}
+
+func TestFindWineInCandidates_EmptyCandidates(t *testing.T) {
+	// Test with no candidates
+	winePath := findWineInCandidates([]string{})
+	if winePath != "" {
+		t.Errorf("expected empty string with no candidates, got %q", winePath)
+	}
+}
+
+func TestFindWineInCandidates_FirstMatch(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "wine-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create two fake wine executables
+	wine1 := filepath.Join(tmpDir, "wine1")
+	wine2 := filepath.Join(tmpDir, "wine2")
+
+	if err := os.WriteFile(wine1, []byte("#!/bin/bash\necho wine1"), 0o755); err != nil {
+		t.Fatalf("failed to create wine1: %v", err)
+	}
+	if err := os.WriteFile(wine2, []byte("#!/bin/bash\necho wine2"), 0o755); err != nil {
+		t.Fatalf("failed to create wine2: %v", err)
+	}
+
+	// Should return the first one found
+	candidates := []string{wine1, wine2}
+	winePath := findWineInCandidates(candidates)
+
+	if winePath != wine1 {
+		t.Errorf("expected first match %q, got %q", wine1, winePath)
+	}
+}
+
+func TestFindWine_Integration(t *testing.T) {
+	// Integration test - just verify it doesn't panic and returns a valid result
+	winePath := findWine()
+
+	if winePath != "" {
+		// If wine was found, verify the path exists
+		if _, err := os.Stat(winePath); os.IsNotExist(err) {
+			t.Errorf("findWine returned non-existent path: %q", winePath)
+		}
+		t.Logf("Wine found at: %s", winePath)
+	} else {
+		t.Log("Wine not found (expected if not installed)")
+	}
 }
 
 func TestOptions(t *testing.T) {
@@ -524,4 +617,3 @@ func TestFindMacAppBundles_MultipleApps(t *testing.T) {
 		t.Errorf("expected 2 bundles, got %d", len(bundles))
 	}
 }
-
