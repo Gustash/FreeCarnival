@@ -25,6 +25,7 @@ type Options struct {
 	WinePath   string // Path to wine executable (default: "wine")
 	WinePrefix string // WINEPREFIX to use (optional)
 	NoWine     bool   // Disable Wine even for Windows executables
+	Wrapper    string // Custom wrapper command to use (replaces Wine if set)
 }
 
 // FindExecutables finds all launchable executables in the install path based on the build OS.
@@ -169,6 +170,11 @@ func Game(ctx context.Context, executablePath string, buildOS auth.BuildOS, args
 		opts = &Options{}
 	}
 
+	// If a custom wrapper is specified, use it
+	if opts.Wrapper != "" {
+		return launchWithWrapper(ctx, executablePath, args, opts)
+	}
+
 	needsWine := buildOS == auth.BuildOSWindows && runtime.GOOS != "windows" && !opts.NoWine
 
 	if needsWine {
@@ -176,6 +182,30 @@ func Game(ctx context.Context, executablePath string, buildOS auth.BuildOS, args
 	}
 
 	return launchNative(ctx, executablePath, args)
+}
+
+func launchWithWrapper(ctx context.Context, executablePath string, args []string, opts *Options) error {
+	// Split wrapper to support commands with arguments (e.g., "proton run")
+	wrapperParts := strings.Fields(opts.Wrapper)
+	if len(wrapperParts) == 0 {
+		return fmt.Errorf("wrapper command is empty")
+	}
+
+	// Build command: wrapper [wrapper args...] executable [game args...]
+	cmdArgs := append(wrapperParts[1:], executablePath)
+	cmdArgs = append(cmdArgs, args...)
+	cmd := exec.Command(wrapperParts[0], cmdArgs...)
+	cmd.Dir = filepath.Dir(executablePath)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+
+	// Pass through Wine-related environment variables if set
+	if opts.WinePrefix != "" {
+		cmd.Env = append(os.Environ(), "WINEPREFIX="+opts.WinePrefix)
+	}
+
+	return launchProcess(ctx, cmd)
 }
 
 func launchNative(ctx context.Context, executablePath string, args []string) error {
