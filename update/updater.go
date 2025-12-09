@@ -160,78 +160,8 @@ func (u *Updater) downloadDelta(ctx context.Context, deltaManifest []manifest.Bu
 
 	logger.Info("Starting download", "size", progress.FormatBytes(totalBytes), "files", totalFiles)
 
-	// Prepare installation (create directories, empty files)
-	fileInfoMap, err := u.prepareInstallation(deltaManifest)
-	if err != nil {
-		return fmt.Errorf("failed to prepare installation: %w", err)
-	}
-
-	// Group chunks by file
-	fileChunks := u.groupChunksByFile(deltaChunks, fileInfoMap)
-
-	// Create a temporary downloader for the delta
 	downloader := download.New(u.client, u.product, u.newVersion, u.options)
-
-	// Use the downloader's internal methods (we'll need to expose these or duplicate)
-	return downloader.DownloadDelta(ctx, fileInfoMap, fileChunks, totalBytes, totalFiles)
-}
-
-func (u *Updater) prepareInstallation(records []manifest.BuildRecord) (map[string]*download.FileInfo, error) {
-	fileInfoMap := make(map[string]*download.FileInfo)
-	fileIndex := 0
-
-	for _, record := range records {
-		// Skip removed files
-		if record.ChangeTag == manifest.ChangeTagRemoved {
-			continue
-		}
-
-		fullPath := filepath.Join(u.installPath, record.FileName)
-
-		if record.IsDirectory() {
-			if err := os.MkdirAll(fullPath, 0o755); err != nil {
-				return nil, fmt.Errorf("failed to create directory %s: %w", fullPath, err)
-			}
-			continue
-		}
-
-		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
-			return nil, fmt.Errorf("failed to create parent directory for %s: %w", fullPath, err)
-		}
-
-		if record.IsEmpty() {
-			f, err := os.Create(fullPath)
-			if err != nil {
-				return nil, fmt.Errorf("failed to create empty file %s: %w", fullPath, err)
-			}
-			f.Close()
-			continue
-		}
-
-		fileInfoMap[record.FileName] = &download.FileInfo{
-			Index:      fileIndex,
-			Record:     record,
-			FullPath:   fullPath,
-			ChunkCount: record.Chunks,
-		}
-		fileIndex++
-	}
-
-	return fileInfoMap, nil
-}
-
-func (u *Updater) groupChunksByFile(chunks []manifest.ChunkRecord, fileInfoMap map[string]*download.FileInfo) map[int][]manifest.ChunkRecord {
-	fileChunks := make(map[int][]manifest.ChunkRecord)
-
-	for _, chunk := range chunks {
-		info, ok := fileInfoMap[chunk.FilePath]
-		if !ok {
-			continue
-		}
-		fileChunks[info.Index] = append(fileChunks[info.Index], chunk)
-	}
-
-	return fileChunks
+	return downloader.Download(ctx, u.installPath, deltaManifest, deltaChunks)
 }
 
 func (u *Updater) printUpdateInfo(delta *DeltaManifest) {

@@ -97,21 +97,28 @@ func New(client *http.Client, product *auth.Product, version *auth.ProductVersio
 }
 
 // Download performs the full download operation.
-func (d *Downloader) Download(ctx context.Context, installPath string) error {
-	logger.Info("Fetching build manifest...")
-	buildManifest, manifestData, err := manifest.FetchBuild(ctx, d.client, d.product, d.version)
-	if err != nil {
-		return fmt.Errorf("failed to fetch build manifest: %w", err)
-	}
+// If there's a BuildManifest and ChunkManifests already available, those can be provided.
+// Otherwise, it will fetch those manifests from the server.
+func (d *Downloader) Download(ctx context.Context, installPath string, buildManifest []manifest.BuildRecord, chunksManifest []manifest.ChunkRecord) error {
+	if buildManifest == nil || chunksManifest == nil {
+		var manifestData []byte
+		var err error
 
-	if err := auth.SaveManifest(d.product.SluggedName, d.version.Version, "manifest", manifestData); err != nil {
-		logger.Warn("Failed to save manifest", "error", err)
-	}
+		logger.Info("Fetching build manifest...")
+		buildManifest, manifestData, err = manifest.FetchBuild(ctx, d.client, d.product, d.version)
+		if err != nil {
+			return fmt.Errorf("failed to fetch build manifest: %w", err)
+		}
 
-	logger.Info("Fetching chunks manifest...")
-	chunksManifest, err := manifest.FetchChunks(ctx, d.client, d.product, d.version)
-	if err != nil {
-		return fmt.Errorf("failed to fetch chunks manifest: %w", err)
+		if err := auth.SaveManifest(d.product.SluggedName, d.version.Version, "manifest", manifestData); err != nil {
+			logger.Warn("Failed to save manifest", "error", err)
+		}
+
+		logger.Info("Fetching chunks manifest...")
+		chunksManifest, err = manifest.FetchChunks(ctx, d.client, d.product, d.version)
+		if err != nil {
+			return fmt.Errorf("failed to fetch chunks manifest: %w", err)
+		}
 	}
 
 	d.calculateTotals(buildManifest)
@@ -168,36 +175,6 @@ func (d *Downloader) Download(ctx context.Context, installPath string) error {
 			return fmt.Errorf("failed to mark Mac executables: %w", err)
 		}
 	}
-
-	return nil
-}
-
-// DownloadDelta downloads files for an update operation.
-// This is similar to Download but skips manifest fetching and uses provided data.
-func (d *Downloader) DownloadDelta(ctx context.Context, fileInfoMap map[string]*FileInfo, fileChunks map[int][]manifest.ChunkRecord, totalBytes int64, totalFiles int) error {
-	d.totalBytes = totalBytes
-	d.totalFiles = totalFiles
-
-	d.progress = progress.New(d.totalBytes, d.totalFiles, d.options.Verbose)
-	for _, info := range fileInfoMap {
-		d.progress.AddFile(info.Index, info.Record.FileName, info.ChunkCount, int64(info.Record.SizeInBytes), 0)
-	}
-
-	err := d.downloadAndWrite(ctx, fileChunks, fileInfoMap, nil)
-
-	if ctx.Err() == context.Canceled {
-		d.progress.Abort()
-		logger.Info("Update cancelled")
-		return context.Canceled
-	}
-
-	if err != nil {
-		d.progress.Abort()
-		return err
-	}
-
-	d.progress.Wait()
-	d.progress.PrintSummary()
 
 	return nil
 }

@@ -139,7 +139,7 @@ the latest version for the current OS will be used.`,
 
 			// Create downloader and start download
 			downloader := download.New(client, product, productVersion, opts)
-			err = downloader.Download(cmd.Context(), installPath)
+			err = downloader.Download(cmd.Context(), installPath, nil, nil)
 
 			// Check if download was cancelled (Ctrl+C)
 			if err == context.Canceled {
