@@ -180,7 +180,7 @@ func Game(ctx context.Context, executablePath string, buildOS auth.BuildOS, args
 }
 
 func launchNative(ctx context.Context, executablePath string, args []string) error {
-	cmd := exec.CommandContext(ctx, executablePath, args...)
+	cmd := exec.Command(executablePath, args...)
 	cmd.Dir = filepath.Dir(executablePath)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -206,7 +206,7 @@ func launchWithWine(ctx context.Context, executablePath string, args []string, o
 	}
 
 	cmdArgs := append([]string{executablePath}, args...)
-	cmd := exec.CommandContext(ctx, winePath, cmdArgs...)
+	cmd := exec.Command(winePath, cmdArgs...)
 	cmd.Dir = filepath.Dir(executablePath)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -243,6 +243,7 @@ func launchProcess(ctx context.Context, cmd *exec.Cmd) error {
 		if err := killProcessGroup(cmd); err != nil {
 			logger.Warn("Failed to kill process group", "error", err)
 		}
+		<-done
 		return ctx.Err()
 	case err := <-done:
 		return err
@@ -256,7 +257,9 @@ func killProcessGroup(cmd *exec.Cmd) error {
 	}
 
 	if runtime.GOOS == "windows" {
-		return cmd.Process.Kill()
+		// Use taskkill to kill the process tree on Windows
+		taskkill := exec.Command("taskkill", "/PID", fmt.Sprintf("%d", cmd.Process.Pid), "/T", "/F")
+		return taskkill.Run()
 	}
 
 	// On Unix, kill the entire process group

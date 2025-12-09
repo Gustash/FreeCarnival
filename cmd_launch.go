@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/gustash/freecarnival/auth"
@@ -104,7 +105,7 @@ Use --wine to specify a custom Wine path, or --no-wine to disable Wine.`,
 			}
 			if err := launch.Game(cmd.Context(), exe.Path, installInfo.OS, gameArgs, launchOpts); err != nil {
 				// Context cancellation (Ctrl+C) is not an error - user intentionally killed the game
-				if err == context.Canceled {
+				if errors.Is(err, context.Canceled) {
 					return nil
 				}
 				return fmt.Errorf("failed to launch game: %w", err)

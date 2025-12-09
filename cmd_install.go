@@ -66,6 +66,8 @@ the latest version for the current OS will be used.`,
 				buildOS = auth.BuildOSMac
 			case "":
 				// Default based on current OS
+				// macOS: prefer native builds
+				// Linux: prefer Windows builds (for Wine compatibility)
 				if runtime.GOOS == "darwin" {
 					buildOS = auth.BuildOSMac
 				} else {
