@@ -1,0 +1,312 @@
+// Package manifest handles parsing IndieGala build manifests.
+package manifest
+
+import (
+	"bytes"
+	"context"
+	"encoding/csv"
+	"fmt"
+	"io"
+	"net/http"
+	"path/filepath"
+	"strconv"
+	"strings"
+
+	"github.com/gustash/freecarnival/auth"
+	"github.com/gustash/freecarnival/logger"
+)
+
+// ContentURL is the base URL for downloading game content.
+const ContentURL = "https://content.indiegalacdn.com"
+
+// MaxChunkSize is the maximum size of a single chunk (1 MiB).
+const MaxChunkSize = 1048576
+
+// ChangeTag represents the type of change for a file.
+type ChangeTag string
+
+const (
+	// ChangeTagAdded indicates a file was added.
+	ChangeTagAdded ChangeTag = "added"
+	// ChangeTagModified indicates a file was modified.
+	ChangeTagModified ChangeTag = "modified"
+	// ChangeTagRemoved indicates a file was removed.
+	ChangeTagRemoved ChangeTag = "removed"
+)
+
+// ChangeTagFromString converts a string to a ChangeTag.
+func ChangeTagFromString(s string) (ChangeTag, error) {
+	switch s {
+	case string(ChangeTagAdded):
+		return ChangeTagAdded, nil
+	case string(ChangeTagModified):
+		return ChangeTagModified, nil
+	case string(ChangeTagRemoved):
+		return ChangeTagRemoved, nil
+	default:
+		return "", fmt.Errorf("invalid ChangeTag value: %s", s)
+	}
+}
+
+// BuildRecord represents a file entry in the build manifest CSV.
+type BuildRecord struct {
+	SizeInBytes int
+	Chunks      int
+	SHA         string
+	Flags       int
+	FileName    string
+	ChangeTag   ChangeTag
+}
+
+// IsDirectory returns true if this record represents a directory.
+func (r *BuildRecord) IsDirectory() bool {
+	return r.Flags == 40
+}
+
+// IsEmpty returns true if the file has no content.
+func (r *BuildRecord) IsEmpty() bool {
+	return r.SizeInBytes == 0
+}
+
+// ChunkRecord represents a chunk entry in the chunks manifest CSV.
+type ChunkRecord struct {
+	ID       int
+	FilePath string
+	ChunkSHA string
+}
+
+// LoadOrFetchBuild tries to load the build manifest locally, falling back to fetching from server.
+// If fetched from server, the manifest is saved locally for future use.
+func LoadOrFetchBuild(ctx context.Context, client *http.Client, slug string, product *auth.Product, version *auth.ProductVersion) ([]BuildRecord, error) {
+	data, err := auth.LoadManifest(slug, version.Version, "manifest")
+	if err == nil {
+		records, err := parseBuildManifest(data)
+		if err == nil {
+			return records, nil
+		}
+		logger.Debug("Failed to parse local manifest, fetching from server", "error", err)
+	} else {
+		logger.Debug("Local manifest not found, fetching from server", "error", err)
+	}
+
+	// Fetch from server
+	if client == nil {
+		return nil, fmt.Errorf("manifest not available locally and no HTTP client provided")
+	}
+
+	logger.Info("Fetching manifest from server...")
+	records, data, err := FetchBuild(ctx, client, product, version)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch manifest: %w", err)
+	}
+
+	// Save manifest for future use
+	if err := auth.SaveManifest(slug, version.Version, "manifest", data); err != nil {
+		logger.Warn("Failed to save manifest", "error", err)
+	}
+
+	return records, nil
+}
+
+// FetchBuild downloads and parses the build manifest for a product version.
+// Returns the parsed records and the raw CSV data for caching.
+func FetchBuild(ctx context.Context, client *http.Client, product *auth.Product, version *auth.ProductVersion) ([]BuildRecord, []byte, error) {
+	url := fmt.Sprintf("%s/DevShowCaseSourceVolume/dev_fold_%s/%s/%s/%s_manifest.csv",
+		ContentURL,
+		product.Namespace,
+		product.IDKeyName,
+		version.OS,
+		version.Version,
+	)
+
+	data, err := fetchCSV(ctx, client, url)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to fetch build manifest: %w", err)
+	}
+
+	records, err := parseBuildManifest(data)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return records, data, nil
+}
+
+// FetchChunks downloads and parses the chunks manifest for a product version.
+func FetchChunks(ctx context.Context, client *http.Client, product *auth.Product, version *auth.ProductVersion) ([]ChunkRecord, error) {
+	url := fmt.Sprintf("%s/DevShowCaseSourceVolume/dev_fold_%s/%s/%s/%s_manifest_chunks.csv",
+		ContentURL,
+		product.Namespace,
+		product.IDKeyName,
+		version.OS,
+		version.Version,
+	)
+
+	data, err := fetchCSV(ctx, client, url)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch chunks manifest: %w", err)
+	}
+
+	return parseChunksManifest(data)
+}
+
+// GetChunkURL returns the download URL for a chunk.
+func GetChunkURL(product *auth.Product, os auth.BuildOS, chunkSHA string) string {
+	return fmt.Sprintf("%s/DevShowCaseSourceVolume/dev_fold_%s/%s/%s/%s",
+		ContentURL,
+		product.Namespace,
+		product.IDKeyName,
+		os,
+		chunkSHA,
+	)
+}
+
+func fetchCSV(ctx context.Context, client *http.Client, url string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "galaClient")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+
+	return io.ReadAll(resp.Body)
+}
+
+// ParseBuildManifest parses a build manifest from CSV data.
+func ParseBuildManifest(data []byte) ([]BuildRecord, error) {
+	return parseBuildManifest(data)
+}
+
+func parseBuildManifest(data []byte) ([]BuildRecord, error) {
+	reader := csv.NewReader(bytes.NewReader(data))
+
+	header, err := reader.Read()
+	if err != nil {
+		return nil, fmt.Errorf("failed to read CSV header: %w", err)
+	}
+
+	colIndex := make(map[string]int)
+	for i, col := range header {
+		colIndex[col] = i
+	}
+
+	var records []BuildRecord
+	for {
+		row, err := reader.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to read CSV row: %w", err)
+		}
+
+		record := BuildRecord{}
+
+		if idx, ok := colIndex["Size in Bytes"]; ok && idx < len(row) {
+			record.SizeInBytes, _ = strconv.Atoi(row[idx])
+		}
+		if idx, ok := colIndex["Chunks"]; ok && idx < len(row) {
+			record.Chunks, _ = strconv.Atoi(row[idx])
+		}
+		if idx, ok := colIndex["SHA"]; ok && idx < len(row) {
+			record.SHA = row[idx]
+		}
+		if idx, ok := colIndex["Flags"]; ok && idx < len(row) {
+			record.Flags, _ = strconv.Atoi(row[idx])
+		}
+		if idx, ok := colIndex["File Name"]; ok && idx < len(row) {
+			record.FileName = NormalizePath(row[idx])
+		}
+		if idx, ok := colIndex["Change Tag"]; ok && idx < len(row) {
+			record.ChangeTag, err = ChangeTagFromString(row[idx])
+			if err != nil {
+				logger.Warn("Unknown ChangeTag supplied: %s", row[idx])
+			}
+		}
+
+		records = append(records, record)
+	}
+
+	return records, nil
+}
+
+func parseChunksManifest(data []byte) ([]ChunkRecord, error) {
+	reader := csv.NewReader(bytes.NewReader(data))
+
+	header, err := reader.Read()
+	if err != nil {
+		return nil, fmt.Errorf("failed to read CSV header: %w", err)
+	}
+
+	colIndex := make(map[string]int)
+	for i, col := range header {
+		colIndex[col] = i
+	}
+
+	var records []ChunkRecord
+	for {
+		row, err := reader.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to read CSV row: %w", err)
+		}
+
+		record := ChunkRecord{}
+
+		if idx, ok := colIndex["ID"]; ok && idx < len(row) {
+			record.ID, _ = strconv.Atoi(row[idx])
+		}
+		if idx, ok := colIndex["Filepath"]; ok && idx < len(row) {
+			record.FilePath = NormalizePath(row[idx])
+		}
+		if idx, ok := colIndex["Chunk SHA"]; ok && idx < len(row) {
+			record.ChunkSHA = row[idx]
+		}
+
+		records = append(records, record)
+	}
+
+	return records, nil
+}
+
+// latin1ToUTF8 converts a Latin-1 (ISO-8859-1) encoded string to UTF-8.
+func latin1ToUTF8(s string) string {
+	var buf strings.Builder
+	buf.Grow(len(s) * 2)
+	for i := 0; i < len(s); i++ {
+		buf.WriteRune(rune(s[i]))
+	}
+	return buf.String()
+}
+
+// normalizePath converts Windows-style backslashes to OS-appropriate separators.
+func normalizePath(path string) string {
+	path = strings.ReplaceAll(path, "\\", "/")
+	return filepath.FromSlash(path)
+}
+
+// NormalizePath converts to Latin-1 first, before normalizing the path for the running OS
+func NormalizePath(filepath string) string {
+	return normalizePath(latin1ToUTF8(filepath))
+}
+
+// ExtractSHA extracts the actual SHA256 hash from a chunk identifier.
+// Chunk identifiers are in the format: {prefix}_{index}_{sha256}
+func ExtractSHA(chunkID string) string {
+	lastUnderscore := strings.LastIndex(chunkID, "_")
+	if lastUnderscore == -1 {
+		return chunkID
+	}
+	return chunkID[lastUnderscore+1:]
+}

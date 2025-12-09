@@ -11,59 +11,64 @@ jobs:
         platform:
           - release_for: Linux-x86_64
             os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
+            goos: linux
+            goarch: amd64
             bin: freecarnival
             name: freecarnival_${{ github.ref_name }}_Linux-x86_64.tar.gz
             extra_files: "README.md LICENSE"
-            command: build
           - release_for: Windows-x86_64
-            os: windows-latest
-            target: x86_64-pc-windows-msvc
+            os: ubuntu-latest
+            goos: windows
+            goarch: amd64
             bin: freecarnival.exe
             name: freecarnival_${{ github.ref_name }}_Windows-x86_64.zip
             extra_files: "README.md LICENSE"
-            command: build
           - release_for: macOS-x86_64
-            os: macOS-latest
-            target: x86_64-apple-darwin
+            os: ubuntu-latest
+            goos: darwin
+            goarch: amd64
             bin: freecarnival
             name: freecarnival_${{ github.ref_name }}_macOS-x86_64.tar.gz
             extra_files: "README.md LICENSE"
-            command: build
           - release_for: macOS-arm64
-            os: macOS-latest
-            target: aarch64-apple-darwin
+            os: ubuntu-latest
+            goos: darwin
+            goarch: arm64
             bin: freecarnival
             name: freecarnival_${{ github.ref_name }}_macOS-arm64.tar.gz
             extra_files: "README.md LICENSE"
-            command: build
 
     runs-on: ${{ matrix.platform.os }}
     steps:
-      - uses: actions/checkout@master
-      - name: Build binary
-        uses: houseabsolute/actions-rust-cross@v0
+      - uses: actions/checkout@v4
+      
+      - name: Set up Go
+        uses: actions/setup-go@v5
         with:
-          command: ${{ matrix.platform.command }}
-          target: ${{ matrix.platform.target }}
-          args: "--locked --release"
-          strip: true
+          go-version: '1.25'
+          
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.platform.goos }}
+          GOARCH: ${{ matrix.platform.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          go build -o ${{ matrix.platform.bin }} -ldflags="-s -w" .
+          
       - name: Package as archive
         shell: bash
         run: |
-          if [[ "${{ matrix.platform.os }}" == "windows-latest" ]]; then
-            7z a ${{ matrix.platform.name }} ./target/${{ matrix.platform.target }}/release/${{ matrix.platform.bin }} ${{ matrix.platform.extra_files }}
+          mkdir -p dist
+          if [[ "${{ matrix.platform.goos }}" == "windows" ]]; then
+            zip ${{ matrix.platform.name }} ${{ matrix.platform.bin }} ${{ matrix.platform.extra_files }}
           else
-            tar czvf ${{ matrix.platform.name }} -C target/${{ matrix.platform.target }}/release ${{ matrix.platform.bin }} -C ../../.. ${{ matrix.platform.extra_files }}
+            tar czvf ${{ matrix.platform.name }} ${{ matrix.platform.bin }} ${{ matrix.platform.extra_files }}
           fi
-      - name: Generate SHA256 (Unix)
+          
+      - name: Generate SHA256
         shell: bash
         run: shasum -a 256 ${{ matrix.platform.name }} > ${{ matrix.platform.name }}.sha256sum
-        if: matrix.platform.os != 'windows-latest'
-      - name: Generate SHA256 (Windows)
-        shell: pwsh
-        run: CertUtil -hashfile ${{ matrix.platform.name }} SHA256 | Select-String 'CertUtil' -NotMatch > ${{ matrix.platform.name }}.sha256sum
-        if: matrix.platform.os == 'windows-latest'
+        
       - name: Upload artifacts
         uses: shogo82148/actions-upload-release-asset@v1
         with:
