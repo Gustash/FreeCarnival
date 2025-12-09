@@ -1,6 +1,7 @@
 package progress
 
 import (
+	"sync"
 	"testing"
 	"time"
 )
@@ -162,27 +163,33 @@ func TestTracker_ConcurrentAccess(t *testing.T) {
 		pt.AddFile(i, "file.txt", 10, 1000, 0)
 	}
 
-	done := make(chan struct{})
+	var wg sync.WaitGroup
+	
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		for i := 0; i < 100; i++ {
 			pt.ChunkDownloaded(i%10, 100)
 		}
-		close(done)
 	}()
 
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		for i := 0; i < 100; i++ {
 			pt.ChunkWritten(i%10, 100)
 		}
 	}()
 
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		for i := 0; i < 10; i++ {
 			pt.FileComplete(i)
 		}
 	}()
 
-	<-done
+	wg.Wait()
 	pt.Wait()
 
 	if pt.completedFiles.Load() != 10 {
