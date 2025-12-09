@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/google/shlex"
 	"github.com/gustash/freecarnival/auth"
 	"github.com/gustash/freecarnival/logger"
 )
@@ -185,8 +186,11 @@ func Game(ctx context.Context, executablePath string, buildOS auth.BuildOS, args
 }
 
 func launchWithWrapper(ctx context.Context, executablePath string, args []string, opts *Options) error {
-	// Split wrapper to support commands with arguments (e.g., "proton run")
-	wrapperParts := strings.Fields(opts.Wrapper)
+	// Use shlex to split wrapper command (handles quoted strings with spaces)
+	wrapperParts, err := shlex.Split(opts.Wrapper)
+	if err != nil {
+		return fmt.Errorf("failed to parse wrapper command: %w", err)
+	}
 	if len(wrapperParts) == 0 {
 		return fmt.Errorf("wrapper command is empty")
 	}

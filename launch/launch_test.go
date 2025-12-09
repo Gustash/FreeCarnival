@@ -2,6 +2,7 @@ package launch
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -825,5 +826,61 @@ func TestGame_WrapperWithSubcommand(t *testing.T) {
 	err = Game(ctx, gamePath, auth.BuildOSLinux, nil, opts)
 	if err != nil {
 		t.Errorf("Game() with wrapper subcommand failed: %v", err)
+	}
+}
+
+func TestGame_WrapperWithSpacesInPath(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "launch-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create a directory with spaces in the name
+	wrapperDir := filepath.Join(tmpDir, "Proton 8.0")
+	if err := os.MkdirAll(wrapperDir, 0o755); err != nil {
+		t.Fatalf("failed to create wrapper dir: %v", err)
+	}
+
+	// Create a fake game executable
+	gameScript := ""
+	gameName := "game"
+	if runtime.GOOS == "windows" {
+		gameName = "game.bat"
+		gameScript = "@echo off\nexit /b 0"
+	} else {
+		gameScript = "#!/bin/sh\nexit 0"
+	}
+
+	gamePath := filepath.Join(tmpDir, gameName)
+	if err := os.WriteFile(gamePath, []byte(gameScript), 0o755); err != nil {
+		t.Fatalf("failed to create game script: %v", err)
+	}
+
+	// Create a fake "proton" wrapper in the directory with spaces
+	wrapperScript := ""
+	wrapperName := "proton"
+	if runtime.GOOS == "windows" {
+		wrapperName = "proton.bat"
+		wrapperScript = "@echo off\nif \"%1\" == \"run\" (shift & call %*) else exit /b 1"
+	} else {
+		wrapperScript = "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then shift; exec \"$@\"; else exit 1; fi"
+	}
+
+	wrapperPath := filepath.Join(wrapperDir, wrapperName)
+	if err := os.WriteFile(wrapperPath, []byte(wrapperScript), 0o755); err != nil {
+		t.Fatalf("failed to create wrapper script: %v", err)
+	}
+
+	ctx := context.Background()
+	opts := &Options{
+		// Use quoted path to handle spaces (like user would do on command line)
+		Wrapper: fmt.Sprintf("\"%s\" run", wrapperPath),
+	}
+
+	// Should execute: "path/to/Proton 8.0/proton" run <game>
+	err = Game(ctx, gamePath, auth.BuildOSLinux, nil, opts)
+	if err != nil {
+		t.Errorf("Game() with wrapper path containing spaces failed: %v", err)
 	}
 }
