@@ -3,6 +3,7 @@ package download
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -153,7 +154,7 @@ func (d *Downloader) Download(ctx context.Context, installPath string, buildMani
 
 	err = d.downloadAndWrite(ctx, fileChunks, fileInfoMap, resumeState)
 
-	if ctx.Err() == context.Canceled {
+	if errors.Is(ctx.Err(), context.Canceled) {
 		d.progress.Abort()
 		logger.Info("\n\nDownload paused. Progress has been saved.")
 		logger.Info("Run the same install command again to resume from where you left off.")
@@ -457,7 +458,7 @@ func (d *Downloader) downloadWorker(ctx context.Context, downloader *ChunkDownlo
 
 		data, err := downloader.Download(ctx, job.FileIndex, job.ChunkSHA)
 
-		if err == context.Canceled {
+		if errors.Is(err, context.Canceled) {
 			d.memory.Release(manifest.MaxChunkSize)
 			return
 		}

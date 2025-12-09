@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -149,7 +150,7 @@ the latest version for the current OS will be used.`,
 			err = downloader.Download(cmd.Context(), installPath, nil, nil)
 
 			// Check if download was cancelled (Ctrl+C)
-			if err == context.Canceled {
+			if errors.Is(err, context.Canceled) {
 				return nil // Exit cleanly without error
 			}
 
