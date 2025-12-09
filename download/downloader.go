@@ -85,7 +85,7 @@ type Downloader struct {
 
 // New creates a new downloader instance.
 func New(client *http.Client, product *auth.Product, version *auth.ProductVersion, options Options) *Downloader {
-	optimizedClient := createOptimizedClient(options.MaxDownloadWorkers)
+	optimizedClient := createOptimizedClient(client, options.MaxDownloadWorkers)
 
 	return &Downloader{
 		client:  optimizedClient,
@@ -514,23 +514,26 @@ func (d *Downloader) printDownloadInfo(records []manifest.BuildRecord) {
 	fmt.Printf("Max Memory Usage: %s\n", progress.FormatBytes(int64(d.options.MaxMemoryUsage)))
 }
 
-func createOptimizedClient(maxWorkers int) *http.Client {
-	return &http.Client{
-		Transport: &http.Transport{
-			MaxIdleConns:        maxWorkers * 2,
-			MaxIdleConnsPerHost: maxWorkers * 2,
-			MaxConnsPerHost:     maxWorkers * 2,
-			IdleConnTimeout:     90 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   30 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-			TLSHandshakeTimeout:   10 * time.Second,
-			DisableCompression:    true,
-			ResponseHeaderTimeout: 30 * time.Second,
-			ExpectContinueTimeout: 1 * time.Second,
-			ForceAttemptHTTP2:     true,
-		},
-		Timeout: 0,
+func createOptimizedClient(client *http.Client, maxWorkers int) *http.Client {
+	if client == nil {
+		client = &http.Client{}
 	}
+	client.Transport = &http.Transport{
+		MaxIdleConns:        maxWorkers * 2,
+		MaxIdleConnsPerHost: maxWorkers * 2,
+		MaxConnsPerHost:     maxWorkers * 2,
+		IdleConnTimeout:     90 * time.Second,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		TLSHandshakeTimeout:   10 * time.Second,
+		DisableCompression:    true,
+		ResponseHeaderTimeout: 30 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		ForceAttemptHTTP2:     true,
+	}
+	client.Timeout = 0
+
+	return client
 }

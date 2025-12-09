@@ -92,7 +92,7 @@ func TestNewDownloader(t *testing.T) {
 }
 
 func TestCreateOptimizedClient(t *testing.T) {
-	client := createOptimizedClient(16)
+	client := createOptimizedClient(&http.Client{}, 16)
 
 	if client == nil {
 		t.Fatal("createOptimizedClient returned nil")
