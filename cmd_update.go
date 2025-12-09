@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/gustash/freecarnival/auth"
@@ -104,7 +105,7 @@ func newUpdateCmd() *cobra.Command {
 			err = updater.Update(cmd.Context())
 
 			// Check if update was cancelled (Ctrl+C)
-			if err == context.Canceled {
+			if errors.Is(err, context.Canceled) {
 				return nil // Exit cleanly without error
 			}
 
