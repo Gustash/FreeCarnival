@@ -103,14 +103,8 @@ func TestCreateOptimizedClient(t *testing.T) {
 		t.Fatal("Transport is not *http.Transport")
 	}
 
-	if transport.MaxIdleConns != 32 {
-		t.Errorf("MaxIdleConns = %d, expected 32", transport.MaxIdleConns)
-	}
-	if transport.MaxIdleConnsPerHost != 32 {
-		t.Errorf("MaxIdleConnsPerHost = %d, expected 32", transport.MaxIdleConnsPerHost)
-	}
-	if transport.MaxConnsPerHost != 32 {
-		t.Errorf("MaxConnsPerHost = %d, expected 32", transport.MaxConnsPerHost)
+	if transport.MaxIdleConnsPerHost != 16 {
+		t.Errorf("MaxIdleConnsPerHost = %d, expected 16", transport.MaxIdleConnsPerHost)
 	}
 	if !transport.ForceAttemptHTTP2 {
 		t.Error("ForceAttemptHTTP2 should be true")

@@ -4,13 +4,11 @@ package download
 import (
 	"context"
 	"fmt"
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
 	"sync"
-	"time"
 
 	"github.com/gustash/freecarnival/auth"
 	"github.com/gustash/freecarnival/launch"
@@ -496,26 +494,19 @@ func (d *Downloader) printDownloadInfo(records []manifest.BuildRecord) {
 	fmt.Printf("Max Memory Usage: %s\n", progress.FormatBytes(int64(d.options.MaxMemoryUsage)))
 }
 
+// createOptimizedClient optimizes HTTP transport for parallel chunk downloads:
+// - Increases MaxIdleConnsPerHost to enable connection reuse across workers
+// - Disables compression to save CPU (game files aren't gzipped)
+// - Forces HTTP/2 for better multiplexing when CDN supports it
 func createOptimizedClient(client *http.Client, maxWorkers int) *http.Client {
 	if client == nil {
 		client = &http.Client{}
 	}
 	client.Transport = &http.Transport{
-		MaxIdleConns:        maxWorkers * 2,
-		MaxIdleConnsPerHost: maxWorkers * 2,
-		MaxConnsPerHost:     maxWorkers * 2,
-		IdleConnTimeout:     90 * time.Second,
-		DialContext: (&net.Dialer{
-			Timeout:   30 * time.Second,
-			KeepAlive: 30 * time.Second,
-		}).DialContext,
-		TLSHandshakeTimeout:   10 * time.Second,
-		DisableCompression:    true,
-		ResponseHeaderTimeout: 30 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-		ForceAttemptHTTP2:     true,
+		MaxIdleConnsPerHost: maxWorkers,
+		DisableCompression:  true,
+		ForceAttemptHTTP2:   true,
 	}
-	client.Timeout = 0
 
 	return client
 }
