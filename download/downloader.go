@@ -181,7 +181,7 @@ func (d *Downloader) Download(ctx context.Context, installPath string, buildMani
 
 func (d *Downloader) calculateTotals(records []manifest.BuildRecord) {
 	for _, record := range records {
-		if !record.IsDirectory() && !record.IsEmpty() {
+		if !record.IsDirectory() && !record.IsEmpty() && record.ChangeTag != manifest.ChangeTagRemoved {
 			d.totalBytes += int64(record.SizeInBytes)
 			d.totalFiles++
 		}
@@ -331,7 +331,7 @@ func (d *Downloader) initializeProgress(fileInfoMap map[string]*FileInfo, resume
 }
 
 func (d *Downloader) downloadAndWrite(ctx context.Context, fileChunks map[int][]manifest.ChunkRecord, fileInfoMap map[string]*FileInfo, resumeState *ResumeState) error {
-	chunkJobs := make(chan ChunkJob, d.options.MaxDownloadWorkers*4)
+	chunkJobs := make(chan ChunkJob, d.options.MaxDownloadWorkers)
 	downloadedChunks := make(chan ChunkResult, d.memory.maxMemory/manifest.MaxChunkSize)
 
 	fileIndexToInfo := make(map[int]*FileInfo)

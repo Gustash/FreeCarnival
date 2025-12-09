@@ -97,17 +97,75 @@ func (u *Updater) Update(ctx context.Context) error {
 	// Filter chunks to only what we need
 	deltaChunks := FilterChunksForDelta(newChunks, delta)
 
-	// Remove modified and removed files
-	logger.Debug("Cleaning up modified and removed files...")
-	if err := u.cleanupFiles(delta); err != nil {
-		return err
-	}
-
 	// Build combined manifest for installation
 	combinedManifest := CombineManifests(delta)
 
+	// Check if this is a resume by looking for files from the new version
+	isResume := u.checkForResumeUpdate(delta, oldManifest)
+
+	// Remove modified and removed files (but only if not resuming)
+	if !isResume {
+		logger.Debug("Cleaning up modified and removed files...")
+		if err := u.cleanupFiles(delta); err != nil {
+			return err
+		}
+	} else {
+		logger.Debug("Skipping cleanup (resuming existing download)")
+		// Only clean up removed files
+		if err := u.cleanupRemovedFiles(delta); err != nil {
+			return err
+		}
+	}
+
 	// Use downloader to install the delta
 	return u.downloadDelta(ctx, combinedManifest, deltaChunks)
+}
+
+func (u *Updater) checkForResumeUpdate(delta *DeltaManifest, oldManifest []manifest.BuildRecord) bool {
+	// Build map of old files for quick lookup
+	oldFiles := make(map[string]manifest.BuildRecord)
+	for _, record := range oldManifest {
+		oldFiles[record.FileName] = record
+	}
+
+	// Check if any "Added" files exist (they shouldn't in a fresh update)
+	for _, record := range delta.Added {
+		if record.IsDirectory() || record.IsEmpty() {
+			continue
+		}
+		filePath := filepath.Join(u.installPath, record.FileName)
+		if _, err := os.Stat(filePath); err == nil {
+			// Added file exists - must be resuming
+			return true
+		}
+	}
+
+	// Check if any "Modified" files have different size than old version
+	// (indicating they were deleted and partially re-downloaded with new version)
+	for _, record := range delta.Modified {
+		if record.IsDirectory() || record.IsEmpty() {
+			continue
+		}
+		filePath := filepath.Join(u.installPath, record.FileName)
+		stat, err := os.Stat(filePath)
+		if err != nil {
+			// File doesn't exist, that's expected if cleanup already ran
+			continue
+		}
+
+		oldRecord, exists := oldFiles[record.FileName]
+		if !exists {
+			// Shouldn't happen, but if it does, treat as resume
+			return true
+		}
+
+		// If size doesn't match old version, it must be from new version download
+		if stat.Size() != int64(oldRecord.SizeInBytes) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (u *Updater) cleanupFiles(delta *DeltaManifest) error {
@@ -123,6 +181,10 @@ func (u *Updater) cleanupFiles(delta *DeltaManifest) error {
 		}
 	}
 
+	return u.cleanupRemovedFiles(delta)
+}
+
+func (u *Updater) cleanupRemovedFiles(delta *DeltaManifest) error {
 	// Remove deleted files and directories
 	for _, record := range delta.Removed {
 		filePath := filepath.Join(u.installPath, record.FileName)
