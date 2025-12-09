@@ -318,4 +318,3 @@ func TestInstallation_SkipsDirectories(t *testing.T) {
 		t.Errorf("expected 1 result (directory should be skipped), got %d", len(results))
 	}
 }
-

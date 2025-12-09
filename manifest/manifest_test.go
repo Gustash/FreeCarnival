@@ -357,4 +357,3 @@ func TestBuildRecord_IsEmpty(t *testing.T) {
 		})
 	}
 }
-

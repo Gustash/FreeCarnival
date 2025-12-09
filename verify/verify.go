@@ -110,7 +110,7 @@ func Installation(slug string, installInfo *auth.InstallInfo, opts Options) (boo
 }
 
 func verifyFile(installPath string, record manifest.BuildRecord) Result {
-	filePath := filepath.Join(installPath, record.FileName)
+	filePath := manifest.NormalizePath(filepath.Join(installPath, record.FileName))
 
 	result := Result{
 		FilePath: record.FileName,

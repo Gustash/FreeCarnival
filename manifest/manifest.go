@@ -164,7 +164,7 @@ func parseBuildManifest(data []byte) ([]BuildRecord, error) {
 			record.Flags, _ = strconv.Atoi(row[idx])
 		}
 		if idx, ok := colIndex["File Name"]; ok && idx < len(row) {
-			record.FileName = normalizePath(latin1ToUTF8(row[idx]))
+			record.FileName = NormalizePath(row[idx])
 		}
 		if idx, ok := colIndex["Change Tag"]; ok && idx < len(row) {
 			record.ChangeTag = row[idx]
@@ -205,7 +205,7 @@ func parseChunksManifest(data []byte) ([]ChunkRecord, error) {
 			record.ID, _ = strconv.Atoi(row[idx])
 		}
 		if idx, ok := colIndex["Filepath"]; ok && idx < len(row) {
-			record.FilePath = normalizePath(latin1ToUTF8(row[idx]))
+			record.FilePath = NormalizePath(row[idx])
 		}
 		if idx, ok := colIndex["Chunk SHA"]; ok && idx < len(row) {
 			record.ChunkSHA = row[idx]
@@ -233,6 +233,11 @@ func normalizePath(path string) string {
 	return filepath.FromSlash(path)
 }
 
+// NormalizePath converts to Latin-1 first, before normalizing the path for the running OS
+func NormalizePath(filepath string) string {
+	return normalizePath(latin1ToUTF8(filepath))
+}
+
 // ExtractSHA extracts the actual SHA256 hash from a chunk identifier.
 // Chunk identifiers are in the format: {prefix}_{index}_{sha256}
 func ExtractSHA(chunkID string) string {
@@ -242,4 +247,3 @@ func ExtractSHA(chunkID string) string {
 	}
 	return chunkID[lastUnderscore+1:]
 }
-
