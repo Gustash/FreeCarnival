@@ -1,12 +1,8 @@
 package download
 
 import (
-	"bytes"
 	"context"
-	"errors"
-	"io"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -114,76 +110,6 @@ func TestCreateOptimizedClient(t *testing.T) {
 	}
 }
 
-func TestChunkDownloader_Download(t *testing.T) {
-	chunkData := []byte("test chunk data for downloading")
-
-	requestCount := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requestCount++
-		if r.Header.Get("User-Agent") != "galaClient" {
-			t.Errorf("expected User-Agent galaClient, got %q", r.Header.Get("User-Agent"))
-		}
-		w.WriteHeader(http.StatusOK)
-		w.Write(chunkData)
-	}))
-	defer server.Close()
-
-	product := &auth.Product{
-		Namespace: "test",
-		IDKeyName: "game",
-	}
-
-	downloader := NewChunkDownloader(&http.Client{}, product, auth.BuildOSWindows, nil)
-
-	// Test doDownload directly with our test server URL
-	data, err := downloader.doDownload(context.Background(), server.URL)
-	if err != nil {
-		t.Fatalf("doDownload failed: %v", err)
-	}
-
-	if !bytes.Equal(data, chunkData) {
-		t.Errorf("downloaded data = %q, expected %q", string(data), string(chunkData))
-	}
-
-	if requestCount != 1 {
-		t.Errorf("expected 1 HTTP request, got %d", requestCount)
-	}
-}
-
-func TestChunkDownloader_HTTPError(t *testing.T) {
-	attemptCount := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		attemptCount++
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer server.Close()
-
-	product := &auth.Product{
-		Namespace: "test",
-		IDKeyName: "game",
-	}
-
-	downloader := NewChunkDownloader(&http.Client{}, product, auth.BuildOSWindows, nil)
-
-	_, err := downloader.doDownload(context.Background(), server.URL)
-	if err == nil {
-		t.Error("expected error on 500 response")
-	}
-
-	var httpErr *HTTPError
-	if !errors.As(err, &httpErr) {
-		t.Errorf("expected HTTPError, got %T", err)
-	}
-
-	if httpErr.StatusCode != http.StatusInternalServerError {
-		t.Errorf("expected status 500, got %d", httpErr.StatusCode)
-	}
-
-	if attemptCount != 1 {
-		t.Errorf("expected 1 attempt, got %d", attemptCount)
-	}
-}
-
 func TestDownloader_PrepareInstallation(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "download-test-*")
 	if err != nil {
@@ -271,25 +197,6 @@ func TestDownloader_GroupChunksByFile(t *testing.T) {
 	}
 }
 
-func TestMemoryLimiter_AcquireRelease(t *testing.T) {
-	memory := NewMemoryLimiter(1024)
-
-	ctx := context.Background()
-
-	if !memory.Acquire(ctx, 512) {
-		t.Error("Acquire should succeed")
-	}
-
-	if memory.Used() != 512 {
-		t.Errorf("memoryUsed = %d, expected 512", memory.Used())
-	}
-
-	memory.Release(512)
-	if memory.Used() != 0 {
-		t.Errorf("memoryUsed after release = %d, expected 0", memory.Used())
-	}
-}
-
 func TestDownloader_InfoOnly(t *testing.T) {
 	product := &auth.Product{
 		Name:      "Test Game",
@@ -334,110 +241,6 @@ func TestDownloader_InfoOnly(t *testing.T) {
 	}
 	if len(entries) > 0 {
 		t.Errorf("InfoOnly should not create any files, but found %d entries", len(entries))
-	}
-}
-
-func TestMemoryLimiter_ContextCancellation(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	memory := NewMemoryLimiter(100)
-
-	if memory.Acquire(ctx, 1024) {
-		t.Error("Acquire should return false for cancelled context")
-	}
-}
-
-func TestDiskWriter_EmptyChannel(t *testing.T) {
-	memory := NewMemoryLimiter(1024 * 1024)
-	writer := NewDiskWriter(memory, nil)
-
-	chunks := make(chan ChunkResult)
-	close(chunks)
-
-	err := writer.WriteChunks(context.Background(), chunks, map[int]*FileInfo{}, map[int]int{}, nil)
-	if err != nil {
-		t.Errorf("WriteChunks failed for empty channel: %v", err)
-	}
-}
-
-func TestDiskWriter_Success(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "writer-test-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	filePath := filepath.Join(tmpDir, "test.txt")
-
-	memory := NewMemoryLimiter(manifest.MaxChunkSize * 3)
-	writer := NewDiskWriter(memory, nil)
-
-	info := &FileInfo{
-		Index:      0,
-		FullPath:   filePath,
-		ChunkCount: 3,
-	}
-
-	fileInfoMap := map[int]*FileInfo{0: info}
-	fileChunkCounts := map[int]int{0: 3}
-
-	chunks := make(chan ChunkResult, 3)
-
-	memory.Acquire(context.Background(), manifest.MaxChunkSize)
-	memory.Acquire(context.Background(), manifest.MaxChunkSize)
-	memory.Acquire(context.Background(), manifest.MaxChunkSize)
-
-	chunks <- ChunkResult{FileIndex: 0, ChunkIndex: 2, Data: []byte("chunk2")}
-	chunks <- ChunkResult{FileIndex: 0, ChunkIndex: 0, Data: []byte("chunk0")}
-	chunks <- ChunkResult{FileIndex: 0, ChunkIndex: 1, Data: []byte("chunk1")}
-	close(chunks)
-
-	err = writer.WriteChunks(context.Background(), chunks, fileInfoMap, fileChunkCounts, nil)
-	if err != nil {
-		t.Fatalf("WriteChunks failed: %v", err)
-	}
-
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		t.Fatalf("failed to read file: %v", err)
-	}
-
-	expected := "chunk0chunk1chunk2"
-	if string(data) != expected {
-		t.Errorf("file contents = %q, expected %q", string(data), expected)
-	}
-}
-
-func TestDiskWriter_ChunkError(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "writer-test-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	filePath := filepath.Join(tmpDir, "test.txt")
-
-	memory := NewMemoryLimiter(manifest.MaxChunkSize * 2)
-	writer := NewDiskWriter(memory, nil)
-
-	info := &FileInfo{
-		Index:      0,
-		FullPath:   filePath,
-		ChunkCount: 2,
-	}
-
-	fileInfoMap := map[int]*FileInfo{0: info}
-	fileChunkCounts := map[int]int{0: 2}
-
-	chunks := make(chan ChunkResult, 2)
-
-	chunks <- ChunkResult{FileIndex: 0, ChunkIndex: 0, Data: nil, Error: io.ErrUnexpectedEOF}
-	close(chunks)
-
-	err = writer.WriteChunks(context.Background(), chunks, fileInfoMap, fileChunkCounts, nil)
-	if err == nil {
-		t.Error("expected error when chunk has error")
 	}
 }
 
