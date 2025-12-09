@@ -1,9 +1,14 @@
 package launch
 
 import (
+	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/gustash/freecarnival/auth"
 )
@@ -316,5 +321,321 @@ func TestFindWine_Integration(t *testing.T) {
 		t.Logf("Wine found at: %s", winePath)
 	} else {
 		t.Log("Wine not found (expected if not installed)")
+	}
+}
+
+func TestGame_NativeExecutable(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "launch-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create a simple test script that exits immediately
+	scriptContent := ""
+	scriptName := "test_game"
+	if runtime.GOOS == "windows" {
+		scriptName = "test_game.bat"
+		scriptContent = "@echo off\nexit /b 0"
+	} else {
+		scriptContent = "#!/bin/sh\nexit 0"
+	}
+
+	scriptPath := filepath.Join(tmpDir, scriptName)
+	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0o755); err != nil {
+		t.Fatalf("failed to create script: %v", err)
+	}
+
+	ctx := context.Background()
+	buildOS := auth.BuildOSLinux
+	switch runtime.GOOS {
+	case "darwin":
+		buildOS = auth.BuildOSMac
+	case "windows":
+		buildOS = auth.BuildOSWindows
+	}
+
+	err = Game(ctx, scriptPath, buildOS, nil, nil)
+	if err != nil {
+		t.Errorf("Game() failed: %v", err)
+	}
+}
+
+func TestGame_WithArguments(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "launch-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create a script that expects arguments
+	scriptContent := ""
+	scriptName := "test_game"
+	if runtime.GOOS == "windows" {
+		scriptName = "test_game.bat"
+		scriptContent = "@echo off\nif \"%1\" == \"--test\" exit /b 0\nexit /b 1"
+	} else {
+		scriptContent = "#!/bin/sh\nif [ \"$1\" = \"--test\" ]; then exit 0; else exit 1; fi"
+	}
+
+	scriptPath := filepath.Join(tmpDir, scriptName)
+	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0o755); err != nil {
+		t.Fatalf("failed to create script: %v", err)
+	}
+
+	ctx := context.Background()
+	buildOS := auth.BuildOSLinux
+	switch runtime.GOOS {
+	case "darwin":
+		buildOS = auth.BuildOSMac
+	case "windows":
+		buildOS = auth.BuildOSWindows
+	}
+
+	args := []string{"--test"}
+	err = Game(ctx, scriptPath, buildOS, args, nil)
+	if err != nil {
+		t.Errorf("Game() with args failed: %v", err)
+	}
+}
+
+func TestGame_ContextCancellation(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "launch-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create a script with an infinite loop
+	scriptContent := ""
+	scriptName := "test_game"
+	if runtime.GOOS == "windows" {
+		scriptName = "test_game.bat"
+		scriptContent = "@echo off\n:loop\ngoto loop"
+	} else {
+		scriptContent = "#!/bin/sh\nwhile true; do sleep 1; done"
+	}
+
+	scriptPath := filepath.Join(tmpDir, scriptName)
+	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0o755); err != nil {
+		t.Fatalf("failed to create script: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	buildOS := auth.BuildOSLinux
+	switch runtime.GOOS {
+	case "darwin":
+		buildOS = auth.BuildOSMac
+	case "windows":
+		buildOS = auth.BuildOSWindows
+	}
+
+	// Launch in goroutine and cancel after a short delay
+	done := make(chan error, 1)
+	go func() {
+		done <- Game(ctx, scriptPath, buildOS, nil, nil)
+	}()
+
+	// Wait a bit then cancel
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+
+	// Should return context.Canceled
+	select {
+	case err := <-done:
+		if err != context.Canceled {
+			t.Errorf("expected context.Canceled, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Error("process did not terminate after context cancellation")
+	}
+
+	// Verify process is actually dead
+	time.Sleep(100 * time.Millisecond) // Give it a moment to clean up
+	if isProcessRunning(scriptName) {
+		t.Error("process is still running after cancellation")
+	}
+}
+
+// isProcessRunning checks if a process with the given name is running
+func isProcessRunning(name string) bool {
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		cmd = exec.Command("tasklist", "/FI", "IMAGENAME eq "+name)
+	} else {
+		cmd = exec.Command("pgrep", "-f", name)
+	}
+
+	output, err := cmd.Output()
+	if err != nil {
+		// pgrep returns exit code 1 when no processes found
+		return false
+	}
+
+	// For Windows, check if the output contains the process name
+	if runtime.GOOS == "windows" {
+		return strings.Contains(string(output), name)
+	}
+
+	// For Unix, pgrep returns PIDs if found
+	return len(strings.TrimSpace(string(output))) > 0
+}
+
+func TestGame_MissingExecutable(t *testing.T) {
+	ctx := context.Background()
+	nonExistentPath := "/tmp/nonexistent/game.exe"
+
+	err := Game(ctx, nonExistentPath, auth.BuildOSLinux, nil, nil)
+	if err == nil {
+		t.Error("expected error for missing executable")
+	}
+}
+
+func TestGame_WithWine(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Wine test not applicable on Windows")
+	}
+
+	tmpDir, err := os.MkdirTemp("", "launch-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create a fake wine executable
+	fakeWinePath := filepath.Join(tmpDir, "wine")
+	wineContent := "#!/bin/sh\nexit 0"
+	if err := os.WriteFile(fakeWinePath, []byte(wineContent), 0o755); err != nil {
+		t.Fatalf("failed to create fake wine: %v", err)
+	}
+
+	// Create a fake Windows executable
+	gameExePath := filepath.Join(tmpDir, "game.exe")
+	if err := os.WriteFile(gameExePath, []byte("fake exe"), 0o644); err != nil {
+		t.Fatalf("failed to create fake exe: %v", err)
+	}
+
+	ctx := context.Background()
+	opts := &Options{
+		WinePath: fakeWinePath,
+	}
+
+	err = Game(ctx, gameExePath, auth.BuildOSWindows, nil, opts)
+	if err != nil {
+		t.Errorf("Game() with Wine failed: %v", err)
+	}
+}
+
+func TestGame_NoWineFlag(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Wine test not applicable on Windows")
+	}
+
+	tmpDir, err := os.MkdirTemp("", "launch-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create a fake Windows executable
+	gameExePath := filepath.Join(tmpDir, "game.exe")
+	exeContent := "#!/bin/sh\nexit 0"
+	if err := os.WriteFile(gameExePath, []byte(exeContent), 0o755); err != nil {
+		t.Fatalf("failed to create fake exe: %v", err)
+	}
+
+	ctx := context.Background()
+	opts := &Options{
+		NoWine: true, // Disable Wine
+	}
+
+	// Should launch directly without Wine
+	err = Game(ctx, gameExePath, auth.BuildOSWindows, nil, opts)
+	if err != nil {
+		t.Errorf("Game() with NoWine failed: %v", err)
+	}
+}
+
+func TestGame_MacAppBundle(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "launch-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create a .app bundle structure
+	appPath := filepath.Join(tmpDir, "TestGame.app")
+	macOSPath := filepath.Join(appPath, "Contents", "MacOS")
+	if err := os.MkdirAll(macOSPath, 0o755); err != nil {
+		t.Fatalf("failed to create app bundle: %v", err)
+	}
+
+	// Create executable inside bundle
+	execPath := filepath.Join(macOSPath, "TestGame")
+	execContent := "#!/bin/sh\nexit 0"
+	if err := os.WriteFile(execPath, []byte(execContent), 0o755); err != nil {
+		t.Fatalf("failed to create executable: %v", err)
+	}
+
+	ctx := context.Background()
+	err = Game(ctx, execPath, auth.BuildOSMac, nil, nil)
+	if err != nil {
+		t.Errorf("Game() for macOS app failed: %v", err)
+	}
+}
+
+func TestLaunchProcess_Success(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "launch-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	scriptContent := ""
+	scriptName := "test_script"
+	if runtime.GOOS == "windows" {
+		scriptName = "test_script.bat"
+		scriptContent = "@echo off\nexit /b 0"
+	} else {
+		scriptContent = "#!/bin/sh\nexit 0"
+	}
+
+	scriptPath := filepath.Join(tmpDir, scriptName)
+	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0o755); err != nil {
+		t.Fatalf("failed to create script: %v", err)
+	}
+
+	ctx := context.Background()
+	err = launchNative(ctx, scriptPath, nil)
+	if err != nil {
+		t.Errorf("launchNative() failed: %v", err)
+	}
+}
+
+func TestLaunchProcess_NonZeroExit(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "launch-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	scriptContent := ""
+	scriptName := "test_script"
+	if runtime.GOOS == "windows" {
+		scriptName = "test_script.bat"
+		scriptContent = "@echo off\nexit /b 42"
+	} else {
+		scriptContent = "#!/bin/sh\nexit 42"
+	}
+
+	scriptPath := filepath.Join(tmpDir, scriptName)
+	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0o755); err != nil {
+		t.Fatalf("failed to create script: %v", err)
+	}
+
+	ctx := context.Background()
+	err = launchNative(ctx, scriptPath, nil)
+	if err == nil {
+		t.Error("expected error for non-zero exit code")
 	}
 }
