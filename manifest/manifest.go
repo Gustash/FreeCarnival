@@ -75,6 +75,39 @@ type ChunkRecord struct {
 	ChunkSHA string
 }
 
+// LoadOrFetchBuild tries to load the build manifest locally, falling back to fetching from server.
+// If fetched from server, the manifest is saved locally for future use.
+func LoadOrFetchBuild(ctx context.Context, client *http.Client, slug string, product *auth.Product, version *auth.ProductVersion) ([]BuildRecord, error) {
+	data, err := auth.LoadManifest(slug, version.Version, "manifest")
+	if err == nil {
+		records, err := parseBuildManifest(data)
+		if err == nil {
+			return records, nil
+		}
+		logger.Debug("Failed to parse local manifest, fetching from server", "error", err)
+	} else {
+		logger.Debug("Local manifest not found, fetching from server", "error", err)
+	}
+
+	// Fetch from server
+	if client == nil {
+		return nil, fmt.Errorf("manifest not available locally and no HTTP client provided")
+	}
+
+	logger.Info("Fetching manifest from server...")
+	records, data, err := FetchBuild(ctx, client, product, version)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch manifest: %w", err)
+	}
+
+	// Save manifest for future use
+	if err := auth.SaveManifest(slug, version.Version, "manifest", data); err != nil {
+		logger.Warn("Failed to save manifest", "error", err)
+	}
+
+	return records, nil
+}
+
 // FetchBuild downloads and parses the build manifest for a product version.
 // Returns the parsed records and the raw CSV data for caching.
 func FetchBuild(ctx context.Context, client *http.Client, product *auth.Product, version *auth.ProductVersion) ([]BuildRecord, []byte, error) {

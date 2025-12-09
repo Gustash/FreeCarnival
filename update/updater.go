@@ -41,32 +41,14 @@ func New(client *http.Client, product *auth.Product, oldVersion, newVersion *aut
 func (u *Updater) Update(ctx context.Context) error {
 	// Load old manifest
 	logger.Info("Loading old manifest...")
-	var oldManifest []manifest.BuildRecord
-	oldManifestData, err := auth.LoadManifest(u.product.SluggedName, u.oldVersion.Version, "manifest")
+	oldManifest, err := manifest.LoadOrFetchBuild(ctx, u.client, u.product.SluggedName, u.product, u.oldVersion)
 	if err != nil {
-		logger.Debug("Couldn't find local manifest. Fetching from server.")
-		oldManifest, oldManifestData, err = manifest.FetchBuild(ctx, u.client, u.product, u.oldVersion)
-
-		if err != nil {
-			return fmt.Errorf("failed to load old manifest: %w (try reinstalling)", err)
-		}
-	} else {
-		oldManifest, err = manifest.ParseBuildManifest(oldManifestData)
-
-		if err != nil {
-			return fmt.Errorf("failed to parse old manifest: %w", err)
-		}
+		return fmt.Errorf("failed to load old manifest: %w (try reinstalling)", err)
 	}
 
-	// Fetch new manifest
-	logger.Info("Fetching new build manifest...")
-	newManifest, newManifestData, err := manifest.FetchBuild(ctx, u.client, u.product, u.newVersion)
+	newManifest, _, err := manifest.FetchBuild(ctx, u.client, u.product, u.newVersion)
 	if err != nil {
 		return fmt.Errorf("failed to fetch new build manifest: %w", err)
-	}
-
-	if err := auth.SaveManifest(u.product.SluggedName, u.newVersion.Version, "manifest", newManifestData); err != nil {
-		logger.Warn("Failed to save manifest", "error", err)
 	}
 
 	// Generate delta

@@ -177,6 +177,80 @@ func (d *Downloader) Download(ctx context.Context, installPath string, buildMani
 	return nil
 }
 
+// Repairs corrupted/missing files from an existing installation by re-downloading them
+func (d *Downloader) RepairFiles(ctx context.Context, slug string, installInfo *auth.InstallInfo, failed []verify.Result) error {
+	// Load library to get product info
+	library, err := auth.LoadLibrary()
+	if err != nil {
+		return fmt.Errorf("failed to load library: %w", err)
+	}
+
+	product := auth.FindProductBySlug(library, slug)
+	if product == nil {
+		return fmt.Errorf("game '%s' not found in library", slug)
+	}
+
+	// Get product version
+	version := product.FindVersion(installInfo.Version, installInfo.OS)
+	if version == nil {
+		return fmt.Errorf("version %s not found for %s", installInfo.Version, slug)
+	}
+
+	// Load manifest
+	manifestData, err := auth.LoadManifest(slug, installInfo.Version, "manifest")
+	if err != nil {
+		return fmt.Errorf("failed to load manifest: %w", err)
+	}
+
+	buildRecords, err := manifest.ParseBuildManifest(manifestData)
+	if err != nil {
+		return fmt.Errorf("failed to parse manifest: %w", err)
+	}
+
+	// Build set of failed file paths
+	failedFiles := make(map[string]bool)
+	for _, f := range failed {
+		failedFiles[f.FilePath] = true
+	}
+
+	// Filter build manifest to only failed files
+	var filteredBuild []manifest.BuildRecord
+	for _, record := range buildRecords {
+		if failedFiles[record.FileName] {
+			filteredBuild = append(filteredBuild, record)
+		}
+	}
+
+	if len(filteredBuild) == 0 {
+		logger.Info("No files to repair")
+		return nil
+	}
+
+	// Fetch chunks manifest
+	chunksManifest, err := manifest.FetchChunks(ctx, d.client, product, version)
+	if err != nil {
+		return fmt.Errorf("failed to fetch chunks manifest: %w", err)
+	}
+
+	// Filter chunks to only failed files
+	var filteredChunks []manifest.ChunkRecord
+	for _, chunk := range chunksManifest {
+		if failedFiles[chunk.FilePath] {
+			filteredChunks = append(filteredChunks, chunk)
+		}
+	}
+
+	// Remove corrupted files before downloading
+	for _, f := range failed {
+		filePath := filepath.Join(installInfo.InstallPath, f.FilePath)
+		if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
+			logger.Warn("Failed to remove corrupted file", "file", f.FilePath, "error", err)
+		}
+	}
+
+	return d.Download(ctx, installInfo.InstallPath, filteredBuild, filteredChunks)
+}
+
 func (d *Downloader) calculateTotals(records []manifest.BuildRecord) {
 	for _, record := range records {
 		if !record.IsDirectory() && !record.IsEmpty() && record.ChangeTag != manifest.ChangeTagRemoved {

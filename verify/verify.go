@@ -31,18 +31,8 @@ type Options struct {
 	MaxWorkers int
 }
 
-// Installation verifies all files in an installation against the manifest.
-func Installation(slug string, installInfo *auth.InstallInfo, opts Options) (bool, []Result, error) {
-	manifestData, err := auth.LoadManifest(slug, installInfo.Version, "manifest")
-	if err != nil {
-		return false, nil, fmt.Errorf("failed to load manifest: %w", err)
-	}
-
-	records, err := manifest.ParseBuildManifest(manifestData)
-	if err != nil {
-		return false, nil, fmt.Errorf("failed to parse manifest: %w", err)
-	}
-
+// Installation verifies all files in an installation against the manifest records.
+func Installation(installInfo *auth.InstallInfo, records []manifest.BuildRecord, opts Options) (bool, []Result, error) {
 	var files []manifest.BuildRecord
 	for _, record := range records {
 		if !record.IsDirectory() {

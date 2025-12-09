@@ -182,8 +182,9 @@ func TestInstallation_Success(t *testing.T) {
 	manifestCSV += "16,1," + sha1 + ",0,file1.txt,\n"
 	manifestCSV += "31,1," + sha2 + ",0,file2.txt,\n"
 
-	if err := auth.SaveManifest("test-game", "1.0", "manifest", []byte(manifestCSV)); err != nil {
-		t.Fatalf("failed to save manifest: %v", err)
+	records, err := manifest.ParseBuildManifest([]byte(manifestCSV))
+	if err != nil {
+		t.Fatalf("failed to parse manifest: %v", err)
 	}
 
 	installInfo := &auth.InstallInfo{
@@ -193,7 +194,7 @@ func TestInstallation_Success(t *testing.T) {
 	}
 
 	opts := Options{Verbose: false}
-	valid, results, err := Installation("test-game", installInfo, opts)
+	valid, results, err := Installation(installInfo, records, opts)
 
 	if err != nil {
 		t.Fatalf("Installation failed: %v", err)
@@ -228,8 +229,9 @@ func TestInstallation_CorruptedFile(t *testing.T) {
 	manifestCSV := "Size in Bytes,Chunks,SHA,Flags,File Name,Change Tag\n"
 	manifestCSV += "17,1,wronghashvalue123456,0,file.txt,\n"
 
-	if err := auth.SaveManifest("test-game", "1.0", "manifest", []byte(manifestCSV)); err != nil {
-		t.Fatalf("failed to save manifest: %v", err)
+	records, err := manifest.ParseBuildManifest([]byte(manifestCSV))
+	if err != nil {
+		t.Fatalf("failed to parse manifest: %v", err)
 	}
 
 	installInfo := &auth.InstallInfo{
@@ -239,7 +241,7 @@ func TestInstallation_CorruptedFile(t *testing.T) {
 	}
 
 	opts := Options{Verbose: false}
-	valid, results, err := Installation("test-game", installInfo, opts)
+	valid, results, err := Installation(installInfo, records, opts)
 
 	if err != nil {
 		t.Fatalf("Installation failed: %v", err)
@@ -252,7 +254,7 @@ func TestInstallation_CorruptedFile(t *testing.T) {
 	}
 }
 
-func TestInstallation_MissingManifest(t *testing.T) {
+func TestInstallation_EmptyManifest(t *testing.T) {
 	testDir := t.TempDir()
 	auth.SetTestConfigDir(testDir)
 	defer auth.SetTestConfigDir("")
@@ -264,10 +266,16 @@ func TestInstallation_MissingManifest(t *testing.T) {
 	}
 
 	opts := Options{}
-	_, _, err := Installation("nonexistent-game", installInfo, opts)
+	valid, results, err := Installation(installInfo, []manifest.BuildRecord{}, opts)
 
-	if err == nil {
-		t.Error("expected error for missing manifest")
+	if err != nil {
+		t.Fatalf("Installation failed: %v", err)
+	}
+	if !valid {
+		t.Error("expected empty manifest to be valid")
+	}
+	if len(results) != 0 {
+		t.Errorf("expected 0 results for empty manifest, got %d", len(results))
 	}
 }
 
@@ -295,8 +303,9 @@ func TestInstallation_SkipsDirectories(t *testing.T) {
 	manifestCSV += "0,0,,40,subdir,\n"
 	manifestCSV += "4,1," + sha + ",0,file.txt,\n"
 
-	if err := auth.SaveManifest("test-game", "1.0", "manifest", []byte(manifestCSV)); err != nil {
-		t.Fatalf("failed to save manifest: %v", err)
+	records, err := manifest.ParseBuildManifest([]byte(manifestCSV))
+	if err != nil {
+		t.Fatalf("failed to parse manifest: %v", err)
 	}
 
 	installInfo := &auth.InstallInfo{
@@ -306,7 +315,7 @@ func TestInstallation_SkipsDirectories(t *testing.T) {
 	}
 
 	opts := Options{}
-	valid, results, err := Installation("test-game", installInfo, opts)
+	valid, results, err := Installation(installInfo, records, opts)
 
 	if err != nil {
 		t.Fatalf("Installation failed: %v", err)
