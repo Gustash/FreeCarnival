@@ -319,21 +319,6 @@ func TestFindWine_Integration(t *testing.T) {
 	}
 }
 
-func TestOptions(t *testing.T) {
-	opts := &Options{
-		WinePath:   "/custom/wine",
-		WinePrefix: "/home/user/.wine-game",
-		NoWine:     false,
-	}
-
-	if opts.WinePath != "/custom/wine" {
-		t.Errorf("expected WinePath '/custom/wine', got %q", opts.WinePath)
-	}
-	if opts.WinePrefix != "/home/user/.wine-game" {
-		t.Errorf("expected WinePrefix '/home/user/.wine-game', got %q", opts.WinePrefix)
-	}
-}
-
 // Mac-specific tests
 
 func TestFindMacAppBundles(t *testing.T) {
