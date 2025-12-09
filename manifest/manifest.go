@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/gustash/freecarnival/auth"
+	"github.com/gustash/freecarnival/logger"
 )
 
 // ContentURL is the base URL for downloading game content.
@@ -21,6 +22,32 @@ const ContentURL = "https://content.indiegalacdn.com"
 // MaxChunkSize is the maximum size of a single chunk (1 MiB).
 const MaxChunkSize = 1048576
 
+// ChangeTag represents the type of change for a file.
+type ChangeTag string
+
+const (
+	// ChangeTagAdded indicates a file was added.
+	ChangeTagAdded ChangeTag = "added"
+	// ChangeTagModified indicates a file was modified.
+	ChangeTagModified ChangeTag = "modified"
+	// ChangeTagRemoved indicates a file was removed.
+	ChangeTagRemoved ChangeTag = "removed"
+)
+
+// ChangeTagFromString converts a string to a ChangeTag.
+func ChangeTagFromString(s string) (ChangeTag, error) {
+	switch s {
+	case string(ChangeTagAdded):
+		return ChangeTagAdded, nil
+	case string(ChangeTagModified):
+		return ChangeTagModified, nil
+	case string(ChangeTagRemoved):
+		return ChangeTagRemoved, nil
+	default:
+		return "", fmt.Errorf("invalid ChangeTag value: %s", s)
+	}
+}
+
 // BuildRecord represents a file entry in the build manifest CSV.
 type BuildRecord struct {
 	SizeInBytes int
@@ -28,7 +55,7 @@ type BuildRecord struct {
 	SHA         string
 	Flags       int
 	FileName    string
-	ChangeTag   string
+	ChangeTag   ChangeTag
 }
 
 // IsDirectory returns true if this record represents a directory.
@@ -167,7 +194,10 @@ func parseBuildManifest(data []byte) ([]BuildRecord, error) {
 			record.FileName = NormalizePath(row[idx])
 		}
 		if idx, ok := colIndex["Change Tag"]; ok && idx < len(row) {
-			record.ChangeTag = row[idx]
+			record.ChangeTag, err = ChangeTagFromString(row[idx])
+			if err != nil {
+				logger.Warn("Unknown ChangeTag supplied: %s", row[idx])
+			}
 		}
 
 		records = append(records, record)

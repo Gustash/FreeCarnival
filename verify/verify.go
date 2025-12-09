@@ -2,17 +2,13 @@
 package verify
 
 import (
-	"bytes"
 	"crypto/sha256"
-	"encoding/csv"
 	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -42,7 +38,7 @@ func Installation(slug string, installInfo *auth.InstallInfo, opts Options) (boo
 		return false, nil, fmt.Errorf("failed to load manifest: %w", err)
 	}
 
-	records, err := parseManifest(manifestData)
+	records, err := manifest.ParseBuildManifest(manifestData)
 	if err != nil {
 		return false, nil, fmt.Errorf("failed to parse manifest: %w", err)
 	}
@@ -110,7 +106,7 @@ func Installation(slug string, installInfo *auth.InstallInfo, opts Options) (boo
 }
 
 func verifyFile(installPath string, record manifest.BuildRecord) Result {
-	filePath := manifest.NormalizePath(filepath.Join(installPath, record.FileName))
+	filePath := filepath.Join(installPath, record.FileName)
 
 	result := Result{
 		FilePath: record.FileName,
@@ -180,54 +176,4 @@ func Chunk(data []byte, expectedSHA string) bool {
 	hasher.Write(data)
 	actualSHA := hex.EncodeToString(hasher.Sum(nil))
 	return actualSHA == expectedSHA
-}
-
-func parseManifest(data []byte) ([]manifest.BuildRecord, error) {
-	reader := csv.NewReader(bytes.NewReader(data))
-
-	header, err := reader.Read()
-	if err != nil {
-		return nil, fmt.Errorf("failed to read CSV header: %w", err)
-	}
-
-	colIndex := make(map[string]int)
-	for i, col := range header {
-		colIndex[col] = i
-	}
-
-	var records []manifest.BuildRecord
-	for {
-		row, err := reader.Read()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return nil, fmt.Errorf("failed to read CSV row: %w", err)
-		}
-
-		record := manifest.BuildRecord{}
-
-		if idx, ok := colIndex["Size in Bytes"]; ok && idx < len(row) {
-			record.SizeInBytes, _ = strconv.Atoi(row[idx])
-		}
-		if idx, ok := colIndex["Chunks"]; ok && idx < len(row) {
-			record.Chunks, _ = strconv.Atoi(row[idx])
-		}
-		if idx, ok := colIndex["SHA"]; ok && idx < len(row) {
-			record.SHA = row[idx]
-		}
-		if idx, ok := colIndex["Flags"]; ok && idx < len(row) {
-			record.Flags, _ = strconv.Atoi(row[idx])
-		}
-		if idx, ok := colIndex["File Name"]; ok && idx < len(row) {
-			record.FileName = strings.ReplaceAll(row[idx], "\\", "/")
-		}
-		if idx, ok := colIndex["Change Tag"]; ok && idx < len(row) {
-			record.ChangeTag = row[idx]
-		}
-
-		records = append(records, record)
-	}
-
-	return records, nil
 }

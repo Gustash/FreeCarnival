@@ -216,6 +216,11 @@ func (d *Downloader) prepareInstallation(installPath string, records []manifest.
 	fileIndex := 0
 
 	for _, record := range records {
+		// Skip removed files
+		if record.ChangeTag == manifest.ChangeTagRemoved {
+			continue
+		}
+
 		fullPath := filepath.Join(installPath, record.FileName)
 
 		if record.IsDirectory() {

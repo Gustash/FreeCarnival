@@ -7,18 +7,6 @@ import (
 	"github.com/gustash/freecarnival/manifest"
 )
 
-// ChangeTag represents the type of change for a file.
-type ChangeTag string
-
-const (
-	// ChangeTagAdded indicates a file was added.
-	ChangeTagAdded ChangeTag = "added"
-	// ChangeTagModified indicates a file was modified.
-	ChangeTagModified ChangeTag = "modified"
-	// ChangeTagRemoved indicates a file was removed.
-	ChangeTagRemoved ChangeTag = "removed"
-)
-
 // DeltaManifest represents the changes between two versions.
 type DeltaManifest struct {
 	Added    []manifest.BuildRecord
@@ -50,11 +38,11 @@ func GenerateDelta(oldManifest, newManifest []manifest.BuildRecord) *DeltaManife
 		oldRecord, exists := oldFiles[fileName]
 		if !exists {
 			// File was added
-			newRecord.ChangeTag = string(ChangeTagAdded)
+			newRecord.ChangeTag = manifest.ChangeTagAdded
 			delta.Added = append(delta.Added, newRecord)
 		} else if oldRecord.SHA != newRecord.SHA {
 			// File was modified (SHA changed)
-			newRecord.ChangeTag = string(ChangeTagModified)
+			newRecord.ChangeTag = manifest.ChangeTagModified
 			delta.Modified = append(delta.Modified, newRecord)
 		}
 	}
@@ -62,7 +50,7 @@ func GenerateDelta(oldManifest, newManifest []manifest.BuildRecord) *DeltaManife
 	// Find removed files
 	for fileName, oldRecord := range oldFiles {
 		if _, exists := newFiles[fileName]; !exists {
-			oldRecord.ChangeTag = string(ChangeTagRemoved)
+			oldRecord.ChangeTag = manifest.ChangeTagRemoved
 			delta.Removed = append(delta.Removed, oldRecord)
 		}
 	}
@@ -131,4 +119,3 @@ func (d *DeltaManifest) PrintSummary() {
 func (d *DeltaManifest) IsEmpty() bool {
 	return len(d.Added) == 0 && len(d.Modified) == 0 && len(d.Removed) == 0
 }
-

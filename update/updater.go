@@ -147,7 +147,7 @@ func (u *Updater) downloadDelta(ctx context.Context, deltaManifest []manifest.Bu
 	var totalBytes int64
 	var totalFiles int
 	for _, record := range deltaManifest {
-		if !record.IsDirectory() && !record.IsEmpty() && record.ChangeTag != string(ChangeTagRemoved) {
+		if !record.IsDirectory() && !record.IsEmpty() && record.ChangeTag != manifest.ChangeTagRemoved {
 			totalBytes += int64(record.SizeInBytes)
 			totalFiles++
 		}
@@ -182,7 +182,7 @@ func (u *Updater) prepareInstallation(records []manifest.BuildRecord) (map[strin
 
 	for _, record := range records {
 		// Skip removed files
-		if record.ChangeTag == string(ChangeTagRemoved) {
+		if record.ChangeTag == manifest.ChangeTagRemoved {
 			continue
 		}
 
