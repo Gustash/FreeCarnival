@@ -9,6 +9,13 @@ jobs:
       fail-fast: false
       matrix:
         platform:
+          - release_for: Linux-arm64
+            os: ubuntu-latest
+            goos: linux
+            goarch: arm64
+            bin: freecarnival
+            name: freecarnival_${{ github.ref_name }}_Linux-arm64.tar.gz
+            extra_files: "README.md LICENSE"
           - release_for: Linux-x86_64
             os: ubuntu-latest
             goos: linux
