@@ -192,9 +192,9 @@ func fetchUserInfoWithURL(ctx context.Context, client *http.Client, targetURL st
 	if ui.Status != "success" {
 		return nil, nil, fmt.Errorf("user_info status=%q", ui.Status)
 	}
-	// In Rust it's a String; likely "true"/"false" – just expose it for now.
-	if ui.UserFound == "false" {
-		return nil, nil, fmt.Errorf("user not found (user_found=false)")
+
+	if ui.UserFound != "true" {
+		return nil, nil, fmt.Errorf("user not found (user_found=%s)", ui.UserFound)
 	}
 
 	storedUi := StoredUserInfo{
