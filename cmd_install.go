@@ -110,9 +110,9 @@ the latest version for the current OS will be used.`,
 						logger.Info("Run 'verify' to check file integrity, or 'uninstall' first to reinstall")
 						return nil
 					}
-					// Different version/OS - require uninstall first to avoid file conflicts
-					return fmt.Errorf("%s v%s (%s) is already installed at %s\nRun 'uninstall %s' first to install a different version",
-						product.Name, existingInstall.Version, existingInstall.OS, existingInstall.InstallPath, slug)
+					// Different version/OS - suggest user downgrades/updates game instead
+					return fmt.Errorf("%s v%s (%s) is already installed at %s\nRun 'update %s -v %s' to install a different version",
+						product.Name, existingInstall.Version, existingInstall.OS, existingInstall.InstallPath, slug, productVersion.Version)
 				}
 			}
 
