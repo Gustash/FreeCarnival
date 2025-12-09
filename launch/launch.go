@@ -206,7 +206,7 @@ func launchWithWine(ctx context.Context, executablePath string, args []string, o
 	}
 
 	cmdArgs := append([]string{executablePath}, args...)
-	cmd := exec.CommandContext(ctx, winePath, cmdArgs...)
+	cmd := exec.Command(winePath, cmdArgs...)
 	cmd.Dir = filepath.Dir(executablePath)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
