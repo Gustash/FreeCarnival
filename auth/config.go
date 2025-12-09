@@ -37,3 +37,17 @@ func configFile(filename string) (string, error) {
 	}
 	return filepath.Join(dir, filename), nil
 }
+
+// deletes the requested config file
+func clearConfigFile(filename string) error {
+	path, err := configFile(filename)
+	if err != nil {
+		return err
+	}
+
+	err = os.Remove(path)
+	if os.IsNotExist(err) {
+		return nil // File was already deleted
+	}
+	return err
+}

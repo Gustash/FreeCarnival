@@ -7,6 +7,8 @@ import (
 	"net/http/cookiejar"
 	"net/url"
 	"os"
+
+	"github.com/gustash/freecarnival/logger"
 )
 
 const baseURL = "https://www.indiegala.com"
@@ -36,16 +38,20 @@ func SaveSession(sess *Session) error {
 
 // ClearSession removes the saved session file, effectively logging out.
 func ClearSession() error {
-	path, err := sessionFilePath()
-	if err != nil {
+	if err := clearConfigFile("session.json"); err != nil {
+		logger.Error("Failed to delete session file", "error", err)
 		return err
 	}
 
-	err = os.Remove(path)
-	if os.IsNotExist(err) {
-		return nil // Already logged out
+	if err := clearConfigFile("user.json"); err != nil {
+		logger.Warn("Failed to delete user info file, this could cause issues", "error", err)
 	}
-	return err
+
+	if err := clearConfigFile("library.json"); err != nil {
+		logger.Warn("Failed to delete library file, this could cause issues", "error", err)
+	}
+
+	return nil
 }
 
 // LoadSessionClient loads the saved cookies and returns a ready-to-use HTTP client.
