@@ -53,7 +53,10 @@ jobs:
           GOARCH: ${{ matrix.platform.goarch }}
           CGO_ENABLED: 0
         run: |
-          go build -o ${{ matrix.platform.bin }} -ldflags="-s -w" .
+          # Strip 'v' prefix from tag (e.g., v1.0.0 -> 1.0.0)
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          go build -o ${{ matrix.platform.bin }} -ldflags="-s -w -X main.Version=${VERSION}" .
           
       - name: Package as archive
         shell: bash
