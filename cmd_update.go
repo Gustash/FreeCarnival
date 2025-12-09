@@ -24,11 +24,8 @@ func newUpdateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "update <slug>",
 		Short: "Update an installed game",
-		Long: `Update an installed game to the latest version (or a specific version).
-
-Only downloads files that have changed, added, or been removed.
-Much faster than reinstalling for small updates.`,
-		Args: cobra.ExactArgs(1),
+		Long:  `Update an installed game to the latest version (or a specific version).`,
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			slug := args[0]
 
