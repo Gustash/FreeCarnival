@@ -41,14 +41,21 @@ func New(client *http.Client, product *auth.Product, oldVersion, newVersion *aut
 func (u *Updater) Update(ctx context.Context) error {
 	// Load old manifest
 	logger.Info("Loading old manifest...")
+	var oldManifest []manifest.BuildRecord
 	oldManifestData, err := auth.LoadManifest(u.product.SluggedName, u.oldVersion.Version, "manifest")
 	if err != nil {
-		return fmt.Errorf("failed to load old manifest: %w (try reinstalling)", err)
-	}
+		logger.Debug("Couldn't find local manifest. Fetching from server.")
+		oldManifest, oldManifestData, err = manifest.FetchBuild(ctx, u.client, u.product, u.oldVersion)
 
-	oldManifest, err := manifest.ParseBuildManifest(oldManifestData)
-	if err != nil {
-		return fmt.Errorf("failed to parse old manifest: %w", err)
+		if err != nil {
+			return fmt.Errorf("failed to load old manifest: %w (try reinstalling)", err)
+		}
+	} else {
+		oldManifest, err = manifest.ParseBuildManifest(oldManifestData)
+
+		if err != nil {
+			return fmt.Errorf("failed to parse old manifest: %w", err)
+		}
 	}
 
 	// Fetch new manifest
