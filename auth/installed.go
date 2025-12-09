@@ -117,7 +117,7 @@ func SaveManifest(slug, version, manifestType string, data []byte) error {
 		return err
 	}
 
-	filename := fmt.Sprintf("%s_%s.csv", version, manifestType)
+	filename := fmt.Sprintf("%s.csv", manifestType)
 	return os.WriteFile(filepath.Join(manifestPath, filename), data, 0o600)
 }
 
@@ -128,7 +128,7 @@ func LoadManifest(slug, version, manifestType string) ([]byte, error) {
 		return nil, err
 	}
 
-	filename := fmt.Sprintf("%s_%s.csv", version, manifestType)
+	filename := fmt.Sprintf("%s.csv", manifestType)
 	path := filepath.Join(dir, slug, version, filename)
 
 	data, err := os.ReadFile(path)

@@ -229,7 +229,7 @@ func TestSaveManifest_CreatesDirectoryStructure(t *testing.T) {
 	}
 
 	// Verify directory structure was created
-	expectedPath := filepath.Join(testDir, "manifests", "my-game", "2.0", "2.0_manifest_chunks.csv")
+	expectedPath := filepath.Join(testDir, "manifests", "my-game", "2.0", "manifest_chunks.csv")
 	if _, err := os.Stat(expectedPath); os.IsNotExist(err) {
 		t.Errorf("expected manifest file at %s", expectedPath)
 	}
