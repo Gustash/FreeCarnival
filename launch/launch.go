@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"syscall"
 
 	"github.com/gustash/freecarnival/auth"
 	"github.com/gustash/freecarnival/logger"
@@ -220,12 +219,8 @@ func launchWithWine(ctx context.Context, executablePath string, args []string, o
 }
 
 func launchProcess(ctx context.Context, cmd *exec.Cmd) error {
-	// Set up process group on Unix systems
-	if runtime.GOOS != "windows" {
-		cmd.SysProcAttr = &syscall.SysProcAttr{
-			Setpgid: true,
-		}
-	}
+	// Set up process group (platform-specific)
+	setupProcessGroup(cmd)
 
 	if err := cmd.Start(); err != nil {
 		return err
@@ -251,27 +246,6 @@ func launchProcess(ctx context.Context, cmd *exec.Cmd) error {
 }
 
 // killProcessGroup kills the process and its entire process group
-func killProcessGroup(cmd *exec.Cmd) error {
-	if cmd.Process == nil {
-		return nil
-	}
-
-	if runtime.GOOS == "windows" {
-		// Use taskkill to kill the process tree on Windows
-		taskkill := exec.Command("taskkill", "/PID", fmt.Sprintf("%d", cmd.Process.Pid), "/T", "/F")
-		return taskkill.Run()
-	}
-
-	// On Unix, kill the entire process group
-	pgid, err := syscall.Getpgid(cmd.Process.Pid)
-	if err != nil {
-		return cmd.Process.Kill()
-	}
-
-	// Kill process group (negative PID kills the group)
-	return syscall.Kill(-pgid, syscall.SIGTERM)
-}
-
 var defaultWineCandidates = []string{
 	"/usr/local/bin/wine",
 	"/usr/bin/wine",
