@@ -2,14 +2,17 @@
 package launch
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 
 	"github.com/gustash/freecarnival/auth"
+	"github.com/gustash/freecarnival/logger"
 )
 
 // Executable represents a launchable executable.
@@ -157,7 +160,8 @@ func isIgnoredExecutable(name string) bool {
 }
 
 // Game launches the specified executable with optional arguments.
-func Game(executablePath string, buildOS auth.BuildOS, args []string, opts *Options) error {
+// It waits for the process to complete and kills it if the context is cancelled.
+func Game(ctx context.Context, executablePath string, buildOS auth.BuildOS, args []string, opts *Options) error {
 	if _, err := os.Stat(executablePath); os.IsNotExist(err) {
 		return fmt.Errorf("executable not found: %s", executablePath)
 	}
@@ -166,41 +170,26 @@ func Game(executablePath string, buildOS auth.BuildOS, args []string, opts *Opti
 		opts = &Options{}
 	}
 
-	// On macOS, use 'open' command for .app bundles
-	if runtime.GOOS == "darwin" && strings.Contains(executablePath, ".app/Contents/MacOS/") {
-		appPath := executablePath
-		if idx := strings.Index(executablePath, ".app/"); idx != -1 {
-			appPath = executablePath[:idx+4]
-		}
-
-		cmdArgs := []string{"-a", appPath}
-		if len(args) > 0 {
-			cmdArgs = append(cmdArgs, "--args")
-			cmdArgs = append(cmdArgs, args...)
-		}
-
-		cmd := exec.Command("open", cmdArgs...)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		return cmd.Run()
-	}
-
 	needsWine := buildOS == auth.BuildOSWindows && runtime.GOOS != "windows" && !opts.NoWine
 
 	if needsWine {
-		return launchWithWine(executablePath, args, opts)
+		return launchWithWine(ctx, executablePath, args, opts)
 	}
 
-	cmd := exec.Command(executablePath, args...)
+	return launchNative(ctx, executablePath, args)
+}
+
+func launchNative(ctx context.Context, executablePath string, args []string) error {
+	cmd := exec.CommandContext(ctx, executablePath, args...)
 	cmd.Dir = filepath.Dir(executablePath)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
 
-	return cmd.Start()
+	return launchProcess(ctx, cmd)
 }
 
-func launchWithWine(executablePath string, args []string, opts *Options) error {
+func launchWithWine(ctx context.Context, executablePath string, args []string, opts *Options) error {
 	winePath := opts.WinePath
 	if winePath == "" {
 		winePath = findWine()
@@ -217,7 +206,7 @@ func launchWithWine(executablePath string, args []string, opts *Options) error {
 	}
 
 	cmdArgs := append([]string{executablePath}, args...)
-	cmd := exec.Command(winePath, cmdArgs...)
+	cmd := exec.CommandContext(ctx, winePath, cmdArgs...)
 	cmd.Dir = filepath.Dir(executablePath)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -227,7 +216,57 @@ func launchWithWine(executablePath string, args []string, opts *Options) error {
 		cmd.Env = append(os.Environ(), "WINEPREFIX="+opts.WinePrefix)
 	}
 
-	return cmd.Start()
+	return launchProcess(ctx, cmd)
+}
+
+func launchProcess(ctx context.Context, cmd *exec.Cmd) error {
+	// Set up process group on Unix systems
+	if runtime.GOOS != "windows" {
+		cmd.SysProcAttr = &syscall.SysProcAttr{
+			Setpgid: true,
+		}
+	}
+
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+
+	// Wait for process or context cancellation
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+
+	select {
+	case <-ctx.Done():
+		logger.Info("Terminating game process...")
+		if err := killProcessGroup(cmd); err != nil {
+			logger.Warn("Failed to kill process group", "error", err)
+		}
+		return ctx.Err()
+	case err := <-done:
+		return err
+	}
+}
+
+// killProcessGroup kills the process and its entire process group
+func killProcessGroup(cmd *exec.Cmd) error {
+	if cmd.Process == nil {
+		return nil
+	}
+
+	if runtime.GOOS == "windows" {
+		return cmd.Process.Kill()
+	}
+
+	// On Unix, kill the entire process group
+	pgid, err := syscall.Getpgid(cmd.Process.Pid)
+	if err != nil {
+		return cmd.Process.Kill()
+	}
+
+	// Kill process group (negative PID kills the group)
+	return syscall.Kill(-pgid, syscall.SIGTERM)
 }
 
 var defaultWineCandidates = []string{

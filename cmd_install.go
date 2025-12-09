@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"github.com/gustash/freecarnival/auth"
 	"github.com/gustash/freecarnival/download"
@@ -65,7 +66,11 @@ the latest version for the current OS will be used.`,
 				buildOS = auth.BuildOSMac
 			case "":
 				// Default based on current OS
-				buildOS = auth.BuildOSWindows // Default to Windows if not specified
+				if runtime.GOOS == "darwin" {
+					buildOS = auth.BuildOSMac
+				} else {
+					buildOS = auth.BuildOSWindows
+				}
 			default:
 				return fmt.Errorf("invalid OS '%s': must be windows, linux, or mac", targetOS)
 			}
