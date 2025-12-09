@@ -23,7 +23,6 @@ func newLoginCmd() *cobra.Command {
 			}
 
 			client, res, err := auth.Login(cmd.Context(), email, password)
-			_ = client // will be reused later
 
 			if res != nil {
 				logger.Debug("Received cookies")
@@ -48,7 +47,23 @@ func newLoginCmd() *cobra.Command {
 				os.Exit(1)
 			}
 
-			logger.Info("Login successful")
+			logger.Info("Login successful. Syncing library...")
+
+			ui, products, err := auth.FetchUserInfo(cmd.Context(), client)
+			if err != nil {
+				logger.Warn("Sync failed. Try running `sync` manually.", "error", err)
+				return nil
+			}
+
+			if err := auth.SaveUserInfo(ui); err != nil {
+				logger.Warn("failed to save user info", "error", err)
+				return nil
+			}
+
+			if err := auth.SaveLibrary(products); err != nil {
+				logger.Warn("failed to save library", "error", err)
+			}
+
 			return nil
 		},
 	}
