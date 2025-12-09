@@ -54,3 +54,4 @@ go run . -- ARGS
 - **Retry logic**: Automatic retry with exponential backoff for transient network errors
 - **File verification**: SHA256 verification of downloaded chunks and installed files
 - **Structured logging**: Configurable log levels (debug, info, warn, error)
+- **Repair support**: Automatically fix broken installs using the verify command
