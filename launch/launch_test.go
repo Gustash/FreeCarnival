@@ -639,3 +639,191 @@ func TestLaunchProcess_NonZeroExit(t *testing.T) {
 		t.Error("expected error for non-zero exit code")
 	}
 }
+
+func TestGame_WithWrapper(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "launch-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create a fake game executable
+	gameScript := ""
+	gameName := "game"
+	if runtime.GOOS == "windows" {
+		gameName = "game.bat"
+		gameScript = "@echo off\nexit /b 0"
+	} else {
+		gameScript = "#!/bin/sh\nexit 0"
+	}
+
+	gamePath := filepath.Join(tmpDir, gameName)
+	if err := os.WriteFile(gamePath, []byte(gameScript), 0o755); err != nil {
+		t.Fatalf("failed to create game script: %v", err)
+	}
+
+	// Create a fake wrapper
+	wrapperScript := ""
+	wrapperName := "wrapper"
+	if runtime.GOOS == "windows" {
+		wrapperName = "wrapper.bat"
+		// Wrapper just runs the first argument
+		wrapperScript = "@echo off\ncall %1\nexit /b %ERRORLEVEL%"
+	} else {
+		// Wrapper just runs the first argument
+		wrapperScript = "#!/bin/sh\nexec \"$@\""
+	}
+
+	wrapperPath := filepath.Join(tmpDir, wrapperName)
+	if err := os.WriteFile(wrapperPath, []byte(wrapperScript), 0o755); err != nil {
+		t.Fatalf("failed to create wrapper script: %v", err)
+	}
+
+	ctx := context.Background()
+	opts := &Options{
+		Wrapper: wrapperPath,
+	}
+
+	// Should launch through the wrapper
+	err = Game(ctx, gamePath, auth.BuildOSLinux, nil, opts)
+	if err != nil {
+		t.Errorf("Game() with wrapper failed: %v", err)
+	}
+}
+
+func TestGame_WrapperWithArguments(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "launch-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create a game that requires --test argument
+	gameScript := ""
+	gameName := "game"
+	if runtime.GOOS == "windows" {
+		gameName = "game.bat"
+		gameScript = "@echo off\nif \"%1\" == \"--test\" exit /b 0\nexit /b 1"
+	} else {
+		gameScript = "#!/bin/sh\nif [ \"$1\" = \"--test\" ]; then exit 0; else exit 1; fi"
+	}
+
+	gamePath := filepath.Join(tmpDir, gameName)
+	if err := os.WriteFile(gamePath, []byte(gameScript), 0o755); err != nil {
+		t.Fatalf("failed to create game script: %v", err)
+	}
+
+	// Create a wrapper that passes through all arguments
+	wrapperScript := ""
+	wrapperName := "wrapper"
+	if runtime.GOOS == "windows" {
+		wrapperName = "wrapper.bat"
+		wrapperScript = "@echo off\ncall %*\nexit /b %ERRORLEVEL%"
+	} else {
+		wrapperScript = "#!/bin/sh\nexec \"$@\""
+	}
+
+	wrapperPath := filepath.Join(tmpDir, wrapperName)
+	if err := os.WriteFile(wrapperPath, []byte(wrapperScript), 0o755); err != nil {
+		t.Fatalf("failed to create wrapper script: %v", err)
+	}
+
+	ctx := context.Background()
+	opts := &Options{
+		Wrapper: wrapperPath,
+	}
+
+	args := []string{"--test"}
+	err = Game(ctx, gamePath, auth.BuildOSLinux, args, opts)
+	if err != nil {
+		t.Errorf("Game() with wrapper and args failed: %v", err)
+	}
+}
+
+func TestGame_WrapperOverridesWine(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Wine override test not applicable on Windows")
+	}
+
+	tmpDir, err := os.MkdirTemp("", "launch-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create a fake Windows executable
+	gameExePath := filepath.Join(tmpDir, "game.exe")
+	gameScript := "#!/bin/sh\nexit 0"
+	if err := os.WriteFile(gameExePath, []byte(gameScript), 0o755); err != nil {
+		t.Fatalf("failed to create game exe: %v", err)
+	}
+
+	// Create a fake wrapper
+	wrapperPath := filepath.Join(tmpDir, "wrapper")
+	wrapperScript := "#!/bin/sh\nexec \"$@\""
+	if err := os.WriteFile(wrapperPath, []byte(wrapperScript), 0o755); err != nil {
+		t.Fatalf("failed to create wrapper: %v", err)
+	}
+
+	ctx := context.Background()
+	opts := &Options{
+		Wrapper: wrapperPath, // Wrapper should override Wine
+	}
+
+	// Even though it's a Windows exe, wrapper should be used instead of Wine
+	err = Game(ctx, gameExePath, auth.BuildOSWindows, nil, opts)
+	if err != nil {
+		t.Errorf("Game() with wrapper (should override Wine) failed: %v", err)
+	}
+}
+
+func TestGame_WrapperWithSubcommand(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "launch-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create a fake game executable
+	gameScript := ""
+	gameName := "game"
+	if runtime.GOOS == "windows" {
+		gameName = "game.bat"
+		gameScript = "@echo off\nexit /b 0"
+	} else {
+		gameScript = "#!/bin/sh\nexit 0"
+	}
+
+	gamePath := filepath.Join(tmpDir, gameName)
+	if err := os.WriteFile(gamePath, []byte(gameScript), 0o755); err != nil {
+		t.Fatalf("failed to create game script: %v", err)
+	}
+
+	// Create a fake "proton" wrapper that expects "run" as first arg
+	wrapperScript := ""
+	wrapperName := "proton"
+	if runtime.GOOS == "windows" {
+		wrapperName = "proton.bat"
+		// Check if first arg is "run"
+		wrapperScript = "@echo off\nif \"%1\" == \"run\" (shift & call %*) else exit /b 1"
+	} else {
+		// Check if first arg is "run", then execute the rest
+		wrapperScript = "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then shift; exec \"$@\"; else exit 1; fi"
+	}
+
+	wrapperPath := filepath.Join(tmpDir, wrapperName)
+	if err := os.WriteFile(wrapperPath, []byte(wrapperScript), 0o755); err != nil {
+		t.Fatalf("failed to create wrapper script: %v", err)
+	}
+
+	ctx := context.Background()
+	opts := &Options{
+		Wrapper: wrapperPath + " run", // Wrapper with subcommand (like "proton run")
+	}
+
+	// Should execute: proton run <game>
+	err = Game(ctx, gamePath, auth.BuildOSLinux, nil, opts)
+	if err != nil {
+		t.Errorf("Game() with wrapper subcommand failed: %v", err)
+	}
+}

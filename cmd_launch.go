@@ -19,6 +19,7 @@ func newLaunchCmd() *cobra.Command {
 		winePath   string
 		winePrefix string
 		noWine     bool
+		wrapper    string
 	)
 
 	cmd := &cobra.Command{
@@ -31,7 +32,8 @@ Use --list to see all available executables.
 Any arguments after -- are passed to the game.
 
 For Windows games on macOS/Linux, Wine is used automatically if available.
-Use --wine to specify a custom Wine path, or --no-wine to disable Wine.`,
+Use --wine to specify a custom Wine path, --wrapper to use a custom wrapper
+(like Proton), or --no-wine to disable Wine entirely.`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			slug := args[0]
@@ -102,6 +104,7 @@ Use --wine to specify a custom Wine path, or --no-wine to disable Wine.`,
 				WinePath:   winePath,
 				WinePrefix: winePrefix,
 				NoWine:     noWine,
+				Wrapper:    wrapper,
 			}
 			if err := launch.Game(cmd.Context(), exe.Path, installInfo.OS, gameArgs, launchOpts); err != nil {
 				// Context cancellation (Ctrl+C) is not an error - user intentionally killed the game
@@ -121,6 +124,7 @@ Use --wine to specify a custom Wine path, or --no-wine to disable Wine.`,
 	cmd.Flags().StringVar(&winePath, "wine", "", "Path to Wine executable (for Windows games on macOS/Linux)")
 	cmd.Flags().StringVar(&winePrefix, "wine-prefix", "", "WINEPREFIX to use (optional)")
 	cmd.Flags().BoolVar(&noWine, "no-wine", false, "Disable Wine even for Windows executables")
+	cmd.Flags().StringVar(&wrapper, "wrapper", "", "Custom wrapper command with args (replaces Wine, e.g., 'proton run')")
 
 	return cmd
 }
