@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/gustash/freecarnival/auth"
+	"github.com/gustash/freecarnival/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -41,6 +42,40 @@ Shows the game name, available versions for each platform, and installation stat
 			fmt.Printf("Slug:      %s\n", product.SluggedName)
 			fmt.Printf("ID:        %d\n", product.ID)
 			fmt.Printf("Namespace: %s\n", product.Namespace)
+
+			client, _, err := auth.LoadSessionClient()
+
+			if err == nil {
+				// Display game details
+				gameDetails, err := auth.FetchGameDetails(cmd.Context(), client, product.SluggedName, product.Namespace)
+
+				if err == nil {
+					fmt.Println()
+
+					exePath := "None"
+					if gameDetails.ExePath != "" {
+						exePath = gameDetails.ExePath
+					}
+
+					args := "None"
+					if gameDetails.Args != "" {
+						args = gameDetails.Args
+					}
+
+					cwd := "None"
+					if gameDetails.Cwd != "" {
+						cwd = gameDetails.Cwd
+					}
+
+					fmt.Printf("Exe Path: %s\n", exePath)
+					fmt.Printf("Args:     %s\n", args)
+					fmt.Printf("Cwd:      %s\n", cwd)
+				} else {
+					logger.Warn("Failed to fetch game details", "error", err)
+				}
+			} else {
+				logger.Warn("Failed to get session client", "error", err)
+			}
 
 			// Installation status
 			fmt.Println()
