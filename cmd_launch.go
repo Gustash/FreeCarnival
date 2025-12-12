@@ -51,7 +51,7 @@ Use --wine to specify a custom Wine path, --wrapper to use a custom wrapper
 			var exe *launch.Executable
 			var gameArgs []string
 			if client, _, err := auth.LoadSessionClient(); err == nil {
-				exe, gameArgs, err = launch.FindDeclaredExecutable(cmd.Context(), client, installInfo.InstallPath, slug)
+				exe, gameArgs, err = launch.FindDeclaredExecutable(cmd.Context(), client, installInfo, slug)
 				if err != nil {
 					logger.Warn("Failed to get executable details from server, falling back to manual search", "error", err)
 				}
