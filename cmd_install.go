@@ -124,17 +124,22 @@ the latest version for the current OS will be used.`,
 				}
 			}
 
-			logger.Info("Installing game",
-				"name", product.Name,
-				"version", productVersion.Version,
-				"os", productVersion.OS,
-				"path", installPath)
-
 			// Load session for authenticated downloads
 			client, _, err := auth.LoadSessionClient()
 			if err != nil {
 				return fmt.Errorf("could not load session: %w (try running 'login' first)", err)
 			}
+
+			logger.Info("Fetching game details")
+			if _, err := auth.FetchGameDetails(cmd.Context(), client, product.SluggedName); err != nil {
+				logger.Warn("Failed to fetch game details", "error", err)
+			}
+
+			logger.Info("Installing game",
+				"name", product.Name,
+				"version", productVersion.Version,
+				"os", productVersion.OS,
+				"path", installPath)
 
 			// Create download options
 			opts := download.Options{

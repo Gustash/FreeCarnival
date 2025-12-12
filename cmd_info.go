@@ -47,7 +47,7 @@ Shows the game name, available versions for each platform, and installation stat
 
 			if err == nil {
 				// Display game details
-				gameDetails, err := auth.FetchGameDetails(cmd.Context(), client, product.SluggedName, product.Namespace)
+				gameDetails, err := auth.FetchGameDetails(cmd.Context(), client, product.SluggedName)
 
 				if err == nil {
 					fmt.Println()

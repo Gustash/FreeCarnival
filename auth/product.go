@@ -65,20 +65,29 @@ func SaveGameDetails(slug string, gameDetails *GameDetails) error {
 }
 
 // FetchGameDetails gets game details from the API (e.g. exe_name, args...).
-func FetchGameDetails(ctx context.Context, client *http.Client, slug, namespace string) (*GameDetails, error) {
-	return getProductInfoWithUrl(ctx, client, productInfoUrl, slug, namespace)
+func FetchGameDetails(ctx context.Context, client *http.Client, slug string) (*GameDetails, error) {
+	return getProductInfoWithUrl(ctx, client, productInfoUrl, slug)
 }
 
 // getProductInfoWithUrl is an internal function that calls the server
 // to fetch game details
-func getProductInfoWithUrl(ctx context.Context, client *http.Client, targetURL, slug, namespace string) (*GameDetails, error) {
+func getProductInfoWithUrl(ctx context.Context, client *http.Client, targetURL, slug string) (*GameDetails, error) {
+	products, err := LoadLibrary()
+	if err != nil {
+		return nil, err
+	}
+	product := FindProductBySlug(products, slug)
+	if product == nil {
+		return nil, fmt.Errorf("couldn't find %s in library", slug)
+	}
+
 	endpoint, err := url.Parse(targetURL)
 	if err != nil {
 		return nil, err
 	}
 
 	queryParams := url.Values{}
-	queryParams.Add("dev_id", namespace)
+	queryParams.Add("dev_id", product.Namespace)
 	queryParams.Add("prod_name", slug)
 
 	endpoint.RawQuery = queryParams.Encode()
