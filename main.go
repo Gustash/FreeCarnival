@@ -11,6 +11,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/gustash/freecarnival/auth"
 	"github.com/gustash/freecarnival/logger"
 	"github.com/spf13/cobra"
 )
@@ -18,7 +19,7 @@ import (
 var (
 	// Version is set at build time via -ldflags
 	Version = "dev"
-	
+
 	//go:embed CODENAME
 	codename string
 )
@@ -41,6 +42,7 @@ func defaultInstallBasePath() string {
 func main() {
 	var logLevel string
 	var showVersion bool
+	var configPath string
 
 	// Set up context with signal handling for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
@@ -83,6 +85,17 @@ func main() {
 			default:
 				logger.SetLevel(logger.LevelInfo)
 			}
+
+			// Set custom config path based on flag
+			if configPath != "" {
+				configPath, err := filepath.Abs(configPath)
+				if err != nil {
+					logger.Error("Could not get absolute path to custom config", "error", err)
+				} else {
+					logger.Debug("Using custom config path", "configPath", configPath)
+					auth.OverrideConfigDir(configPath)
+				}
+			}
 		},
 	}
 
@@ -99,6 +112,7 @@ func main() {
 
 	rootCmd.PersistentFlags().BoolVarP(&showVersion, "version", "V", false, "Print version information")
 	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "info", "Log level (debug, info, warn, error)")
+	rootCmd.PersistentFlags().StringVar(&configPath, "config-path", "", "Use custom config directory")
 
 	if err := rootCmd.ExecuteContext(ctx); err != nil {
 		logger.Error(err.Error())

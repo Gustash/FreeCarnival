@@ -15,9 +15,9 @@ func setupTestConfigDir(t *testing.T) func() {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	testConfigDir = tmpDir
+	overrideConfigDir = tmpDir
 	return func() {
-		testConfigDir = ""
+		overrideConfigDir = ""
 		os.RemoveAll(tmpDir)
 	}
 }
@@ -49,7 +49,7 @@ func TestSaveSession(t *testing.T) {
 	}
 
 	// Verify file was created
-	path := filepath.Join(testConfigDir, "session.json")
+	path := filepath.Join(overrideConfigDir, "session.json")
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		t.Fatal("session.json was not created")
 	}
@@ -130,8 +130,8 @@ func TestLoadSessionClient_InvalidJSON(t *testing.T) {
 	defer cleanup()
 
 	// Create invalid JSON session file
-	path := filepath.Join(testConfigDir, "session.json")
-	if err := os.MkdirAll(testConfigDir, 0o700); err != nil {
+	path := filepath.Join(overrideConfigDir, "session.json")
+	if err := os.MkdirAll(overrideConfigDir, 0o700); err != nil {
 		t.Fatalf("failed to create config dir: %v", err)
 	}
 	if err := os.WriteFile(path, []byte("not valid json"), 0o600); err != nil {
@@ -218,7 +218,7 @@ func TestClearSession_Success(t *testing.T) {
 	}
 
 	// Verify session exists
-	path := filepath.Join(testConfigDir, "session.json")
+	path := filepath.Join(overrideConfigDir, "session.json")
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		t.Fatal("session file should exist before clearing")
 	}

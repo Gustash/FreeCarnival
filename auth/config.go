@@ -6,18 +6,24 @@ import (
 )
 
 // testConfigDir can be set during tests to override the config directory
-var testConfigDir string
+var overrideConfigDir string
 
 // SetTestConfigDir sets the config directory for testing purposes.
 // Pass empty string to reset to default behavior.
 func SetTestConfigDir(dir string) {
-	testConfigDir = dir
+	OverrideConfigDir(dir)
+}
+
+// OverrideConfigDir sets the config directory to something other than the default.
+// Pass empty string to reset to default behavior.
+func OverrideConfigDir(path string) {
+	overrideConfigDir = path
 }
 
 // configDir returns the configuration directory path (e.g., ~/.config/FreeCarnival)
 func configDir() (string, error) {
-	if testConfigDir != "" {
-		return testConfigDir, nil
+	if overrideConfigDir != "" {
+		return overrideConfigDir, nil
 	}
 	dir, err := os.UserConfigDir()
 	if err != nil {

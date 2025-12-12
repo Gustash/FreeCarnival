@@ -251,7 +251,7 @@ func TestSaveUserInfo(t *testing.T) {
 	}
 
 	// Verify file was created
-	path := filepath.Join(testConfigDir, "user.json")
+	path := filepath.Join(overrideConfigDir, "user.json")
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		t.Fatal("user.json was not created")
 	}
@@ -288,7 +288,7 @@ func TestSaveUserInfo_NilFields(t *testing.T) {
 	}
 
 	// Verify file was created
-	path := filepath.Join(testConfigDir, "user.json")
+	path := filepath.Join(overrideConfigDir, "user.json")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("failed to read user.json: %v", err)
@@ -351,7 +351,7 @@ func TestSaveLibrary(t *testing.T) {
 	}
 
 	// Verify file was created
-	path := filepath.Join(testConfigDir, "library.json")
+	path := filepath.Join(overrideConfigDir, "library.json")
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		t.Fatal("library.json was not created")
 	}
@@ -390,7 +390,7 @@ func TestSaveLibrary_Empty(t *testing.T) {
 	}
 
 	// Verify file was created
-	path := filepath.Join(testConfigDir, "library.json")
+	path := filepath.Join(overrideConfigDir, "library.json")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("failed to read library.json: %v", err)
