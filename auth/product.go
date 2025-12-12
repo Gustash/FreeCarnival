@@ -111,15 +111,19 @@ func getProductInfoWithUrl(ctx context.Context, client *http.Client, targetURL, 
 	if err != nil {
 		return nil, err
 	}
+	bodyStr := string(bodyBytes)
 
 	var pi ProductInfo
 	if err := json.Unmarshal(bodyBytes, &pi); err != nil {
 		// If JSON decoding fails, treat as hard error
-		bodyStr := string(bodyBytes)
 		return nil, fmt.Errorf("failed to decode product info response: %w (body: %s)", err, bodyStr)
 	}
 
 	if resp.StatusCode == http.StatusOK && pi.Status == "success" {
+		if pi.GameDetails == nil {
+			return nil, fmt.Errorf("server didn't respond with game details: (body: %s)", bodyStr)
+		}
+
 		if err := SaveGameDetails(slug, pi.GameDetails); err != nil {
 			logger.Warn("Failed to save product info", "slug", slug, "error", err)
 		}

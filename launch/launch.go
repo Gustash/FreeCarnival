@@ -15,6 +15,7 @@ import (
 	"github.com/google/shlex"
 	"github.com/gustash/freecarnival/auth"
 	"github.com/gustash/freecarnival/logger"
+	"github.com/gustash/freecarnival/manifest"
 )
 
 // Executable represents a launchable executable.
@@ -362,10 +363,14 @@ func FindDeclaredExecutable(ctx context.Context, client *http.Client, installInf
 	}
 
 	if gameDetails.Args != "" {
+		// Some games use $ to separate the args. Not sure if this logic works for all cases
 		if strings.Contains(gameDetails.Args, "$") {
 			args = strings.Split(gameDetails.Args, "$")
 		} else {
-			args = strings.Fields(gameDetails.Args)
+			args, err = shlex.Split(gameDetails.Args)
+			if err != nil {
+				logger.Warn("Failed to parse args, skipping them", "args", gameDetails.Args, "error", err)
+			}
 		}
 	}
 
@@ -377,6 +382,7 @@ func FindDeclaredExecutable(ctx context.Context, client *http.Client, installInf
 		// find a better solution for handling this.
 		exePath := strings.Replace(gameDetails.ExePath, fmt.Sprintf("%s\\", slug), "", 1)
 		exePath = path.Join(installInfo.InstallPath, exePath)
+		exePath = manifest.NormalizePath(exePath)
 		exe = &Executable{
 			Path: exePath,
 			Name: filepath.Base(exePath),
