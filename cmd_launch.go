@@ -38,12 +38,6 @@ Use --wine to specify a custom Wine path, --wrapper to use a custom wrapper
 		RunE: func(cmd *cobra.Command, args []string) error {
 			slug := args[0]
 
-			// Get game arguments (everything after --)
-			var gameArgs []string
-			if cmd.ArgsLenAtDash() > 0 {
-				gameArgs = args[cmd.ArgsLenAtDash():]
-			}
-
 			// Check if game is installed
 			installInfo, err := auth.GetInstalled(slug)
 			if err != nil {
@@ -53,38 +47,54 @@ Use --wine to specify a custom Wine path, --wrapper to use a custom wrapper
 				return fmt.Errorf("%s is not installed", slug)
 			}
 
-			// Find executables
-			executables, err := launch.FindExecutables(installInfo.InstallPath, installInfo.OS)
-			if err != nil {
-				return fmt.Errorf("failed to find executables: %w", err)
-			}
-
-			if len(executables) == 0 {
-				return fmt.Errorf("no executables found in %s", installInfo.InstallPath)
-			}
-
-			// If --list flag, just show executables and exit
-			if list {
-				fmt.Printf("Executables for %s:\n\n", slug)
-				for i, exe := range executables {
-					fmt.Printf("  %d. %s\n", i+1, exe.Name)
-					fmt.Printf("     %s\n", exe.Path)
-				}
-				return nil
-			}
-
-			// Select executable (use first one if multiple found and no --exe specified)
+			// Fetch game details
 			var exe *launch.Executable
-			if exeName != "" {
-				exe, err = launch.SelectExecutable(executables, exeName)
+			var gameArgs []string
+			if client, _, err := auth.LoadSessionClient(); err == nil {
+				exe, gameArgs, err = launch.FindDeclaredExecutable(cmd.Context(), client, installInfo, slug)
 				if err != nil {
-					return err
+					logger.Warn("Failed to get executable details from server, falling back to manual search", "error", err)
 				}
-			} else {
-				exe = &executables[0]
-				if len(executables) > 1 {
-					logger.Info("Multiple executables found, using first", "exe", exe.Name)
-					logger.Info("Use --list to see all, --exe <name> to specify another")
+			}
+
+			// Get game arguments (everything after --)
+			if cmd.ArgsLenAtDash() > 0 {
+				gameArgs = append(gameArgs, args[cmd.ArgsLenAtDash():]...)
+			}
+
+			if exe == nil {
+				// Find executables
+				executables, err := launch.FindExecutables(installInfo.InstallPath, installInfo.OS)
+				if err != nil {
+					return fmt.Errorf("failed to find executables: %w", err)
+				}
+
+				if len(executables) == 0 {
+					return fmt.Errorf("no executables found in %s", installInfo.InstallPath)
+				}
+
+				// If --list flag, just show executables and exit
+				if list {
+					fmt.Printf("Executables for %s:\n\n", slug)
+					for i, exe := range executables {
+						fmt.Printf("  %d. %s\n", i+1, exe.Name)
+						fmt.Printf("     %s\n", exe.Path)
+					}
+					return nil
+				}
+
+				// Select executable (use first one if multiple found and no --exe specified)
+				if exeName != "" {
+					exe, err = launch.SelectExecutable(executables, exeName)
+					if err != nil {
+						return err
+					}
+				} else {
+					exe = &executables[0]
+					if len(executables) > 1 {
+						logger.Info("Multiple executables found, using first", "exe", exe.Name)
+						logger.Info("Use --list to see all, --exe <name> to specify another")
+					}
 				}
 			}
 

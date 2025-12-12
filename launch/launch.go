@@ -4,8 +4,10 @@ package launch
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -13,6 +15,7 @@ import (
 	"github.com/google/shlex"
 	"github.com/gustash/freecarnival/auth"
 	"github.com/gustash/freecarnival/logger"
+	"github.com/gustash/freecarnival/manifest"
 )
 
 // Executable represents a launchable executable.
@@ -340,4 +343,51 @@ func SelectExecutable(executables []Executable, exeName string) (*Executable, er
 	}
 
 	return nil, fmt.Errorf("multiple executables found, please specify one with --exe")
+}
+
+// FindDeclaredExecutable looks for GameDetails for the game to launch and returns the executable and args
+// defined there, if any
+func FindDeclaredExecutable(ctx context.Context, client *http.Client, installInfo *auth.InstallInfo, slug string) (*Executable, []string, error) {
+	// The game details exe and args are only valid for Windows builds
+	// If the installed build is any other OS, let's ignore them
+	if installInfo.OS != auth.BuildOSWindows {
+		return nil, nil, nil
+	}
+	var exe *Executable
+	var args []string
+
+	logger.Debug("Looking for game details")
+	gameDetails, err := auth.FetchGameDetails(ctx, client, slug)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if gameDetails.Args != "" {
+		// Some games use $ to separate the args. Not sure if this logic works for all cases
+		if strings.Contains(gameDetails.Args, "$") {
+			args = strings.Split(gameDetails.Args, "$")
+		} else {
+			args, err = shlex.Split(gameDetails.Args)
+			if err != nil {
+				logger.Warn("Failed to parse args, skipping them", "args", gameDetails.Args, "error", err)
+			}
+		}
+	}
+
+	if gameDetails.ExePath != "" {
+		// Not too sure about this. At least syberia-ii prepends the slugged name to the
+		// path of the exe. I assume the galaClient always installs in folders with the
+		// slugged name, but since we don't do that here, we skip it.
+		// This might break if some games don't do this, and if that happens, we should
+		// find a better solution for handling this.
+		exePath := strings.Replace(gameDetails.ExePath, fmt.Sprintf("%s\\", slug), "", 1)
+		exePath = path.Join(installInfo.InstallPath, exePath)
+		exePath = manifest.NormalizePath(exePath)
+		exe = &Executable{
+			Path: exePath,
+			Name: filepath.Base(exePath),
+		}
+	}
+
+	return exe, args, nil
 }
