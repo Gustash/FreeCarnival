@@ -50,6 +50,7 @@ func gameDetailsPath(slug string) (string, error) {
 	return filepath.Join(dir, fmt.Sprintf("%s.json", slug)), nil
 }
 
+// SaveGameDetails saves the provided GameDetails for the specified game slug to a file.
 func SaveGameDetails(slug string, gameDetails *GameDetails) error {
 	path, err := gameDetailsPath(slug)
 	if err != nil {
